@@ -3069,3 +3069,29 @@ end)
 -- ============================================================================
 handle_menu_visibility()
 client.log("Guardian Reborn | V1.0")
+
+return {
+    stop = function()
+        ui.enable:set(false)
+        pui.traverse(ui, function(item)
+            pcall(function() item:set_visible(false) end)
+        end)
+
+        if last_mindmg_value ~= nil then restore_mindmg() end
+        fakelag_ref:override()
+        client.set_clan_tag("")
+
+        local players = entity.get_players(true)
+        if players then
+            for i = 1, #players do
+                pcall(function()
+                    plist.set(players[i], "Force body yaw", false)
+                    plist.set(players[i], "Force body yaw value", 0)
+                    plist.set(players[i], "Correction active", true)
+                    plist.set(players[i], "Override prefer body aim", "-")
+                    plist.set(players[i], "Override safe point", "-")
+                end)
+            end
+        end
+    end
+}
