@@ -1,5 +1,50 @@
 local ffi = require "ffi"
-local exploits = require "gamesense/extended_exploits" 
+
+-- ============================================================================
+-- EXPLOIT DETECTION (native implementations)
+-- ============================================================================
+local exploit_refs = {
+    dt = ui.reference("RAGE", "Exploits", "Double tap"),
+    hs = ui.reference("RAGE", "Exploits", "Hide shots")
+}
+
+local pending_force_defensive = false
+
+local function exploit_is_active()
+    local me = entity.get_local_player()
+    if not me then return false end
+    local tickbase = entity.get_prop(me, "m_nTickBase")
+    return tickbase ~= nil and tickbase > globals.tickcount() + 1
+end
+
+local function exploit_in_defensive()
+    local me = entity.get_local_player()
+    if not me then return false end
+    local tickbase = entity.get_prop(me, "m_nTickBase")
+    return tickbase ~= nil and tickbase > globals.tickcount() + 1
+end
+
+local function exploit_in_recharge()
+    local me = entity.get_local_player()
+    if not me then return false end
+    local tickbase = entity.get_prop(me, "m_nTickBase")
+    return tickbase ~= nil and globals.tickcount() > tickbase
+end
+
+local function exploit_is_doubletap()
+    return exploit_refs.dt and ui.get(exploit_refs.dt)
+end
+
+local function exploit_is_hideshots()
+    return exploit_refs.hs and ui.get(exploit_refs.hs)
+end
+
+local function exploit_force_defensive(val)
+    pending_force_defensive = val
+end
+
+local function exploit_allow_unsafe(_)
+end
 
 -- ============================================================================
 -- GLOBAL STATE PARAMETERS & UTILITIES
@@ -252,18 +297,18 @@ end
 -- ============================================================================
 local function handle_anti_defensive(cmd)
     if not ui.get(ui_elements.anti_defensive) then 
-        exploits:should_force_defensive(false) 
+        exploit_force_defensive(false) 
         return 
     end
     
     local local_player = entity.get_local_player() 
     if not local_player or not entity.is_alive(local_player) then 
-        exploits:should_force_defensive(false) 
+        exploit_force_defensive(false) 
         return 
     end
     
     local target = client.current_threat() 
-    if not target or not exploits:is_active() or exploits:in_defensive() or exploits:in_recharge() then 
+    if not target or not exploit_is_active() or exploit_in_defensive() or exploit_in_recharge() then 
         return 
     end
     
@@ -271,7 +316,7 @@ local function handle_anti_defensive(cmd)
     local sim_time = safe_get_prop(target, "m_flSimulationTime") 
     local old_sim = safe_get_prop(target, "m_flOldSimulationTime") 
     if not sim_time or not old_sim then 
-        exploits:should_force_defensive(false) 
+        exploit_force_defensive(false) 
         return 
     end
     
@@ -282,7 +327,7 @@ local function handle_anti_defensive(cmd)
     
     -- Target is actively manipulating Tickbase / Breaking Lagcomp
     if delta > 0.2 or speed < 1.01 then 
-        if contains(options, "Instant Double Tap") and exploits:is_doubletap() then 
+        if contains(options, "Instant Double Tap") and exploit_is_doubletap() then 
             should_force = true
             cmd.quick_stop = true 
         end
@@ -316,7 +361,7 @@ local function handle_anti_defensive(cmd)
         end
     end
     
-    exploits:should_force_defensive(should_force) 
+    exploit_force_defensive(should_force) 
 end
 
 -- ============================================================================
@@ -399,12 +444,12 @@ local function draw_defensive_indicator()
     local screen_width, screen_height = client.screen_size() 
     local y_offset = 80 
     
-    if exploits:is_active() then 
+    if exploit_is_active() then 
         local status_text, r, g, b = "", 255, 255, 255 
-        if exploits:in_defensive() then status_text, r, g, b = "DEFENSIVE ACTIVE", 0, 255, 0 
-        elseif exploits:in_recharge() then status_text, r, g, b = "RECHARGING", 255, 165, 0 
-        elseif exploits:is_doubletap() then status_text, r, g, b = "DT READY", 0, 255, 255 
-        elseif exploits:is_hideshots() then status_text, r, g, b = "HIDESHOTS READY", 0, 255, 255 end 
+        if exploit_in_defensive() then status_text, r, g, b = "DEFENSIVE ACTIVE", 0, 255, 0 
+        elseif exploit_in_recharge() then status_text, r, g, b = "RECHARGING", 255, 165, 0 
+        elseif exploit_is_doubletap() then status_text, r, g, b = "DT READY", 0, 255, 255 
+        elseif exploit_is_hideshots() then status_text, r, g, b = "HIDESHOTS READY", 0, 255, 255 end 
         
         if status_text ~= "" then
             renderer.text(screen_width / 2, screen_height - y_offset, r, g, b, 255, "c", 0, status_text) 
@@ -417,14 +462,11 @@ end
 -- INTERFACE ENGINE CALL LOOPS
 -- ============================================================================
 client.set_event_callback("setup_command", function(cmd)
-    -- Fixed syntax error: Converted inline expression to a proper statement block
-    if ui.get(ui_elements.unsafe_charge) then
-        exploits:allow_unsafe_charge(true)
-    else
-        exploits:allow_unsafe_charge(false)
-    end
+    exploit_allow_unsafe(ui.get(ui_elements.unsafe_charge))
     
-    handle_anti_defensive(cmd) --
+    handle_anti_defensive(cmd)
+
+    cmd.force_defensive = pending_force_defensive
     
     local prediction_data = enhanced_prediction(cmd) 
     if prediction_data then
@@ -486,8 +528,8 @@ handle_menu_visibility()
 return {
     stop = function()
         ui.set(ui_elements.enable, false)
-        exploits:should_force_defensive(false)
-        exploits:allow_unsafe_charge(false)
+        exploit_force_defensive(false)
+        exploit_allow_unsafe(false)
 
         velocity_history = {}
         prediction_records = {}
