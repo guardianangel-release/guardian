@@ -2814,6 +2814,8 @@ end
 local function handle_menu_visibility()
     local enabled = ui.enable:get()
     local tab = ui.tabs:get()
+
+    ui.tabs:set_visible(enabled)
     
     -- Traversal visibility states driven by standard PUI mapping elements
     ui.home.info:set_visible(enabled and tab == "Home")
