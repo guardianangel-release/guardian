@@ -4,8 +4,8 @@ local ffi = require "ffi"
 -- EXPLOIT DETECTION (native implementations)
 -- ============================================================================
 local exploit_refs = {
-    dt = ui.reference("RAGE", "Exploits", "Double tap"),
-    hs = ui.reference("RAGE", "Exploits", "Hide shots")
+    dt = ui.reference("Rage", "Aimbot", "Double tap"),
+    hs = ui.reference("AA", "Other", "On shot anti-aim")
 }
 
 local pending_force_defensive = false
