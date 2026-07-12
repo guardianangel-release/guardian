@@ -3,7 +3,6 @@ local base64 = require "gamesense/base64"
 local json = require "json"
 local vector = require "vector"
 local c_entity = require "gamesense/entity"
-local exploits = require "gamesense/extended_exploits"
 
 -- ===========================
 -- FFI DEFINITIONS
@@ -5231,8 +5230,9 @@ local function optimize_fakelag()
         return
     end
     
-    -- DT recharge: set fakelag to 1 for fastest recharge
-    if exploits:in_recharge() then
+    -- DT recharge: tickbase is behind real time, set fakelag to 1 for fastest recharge
+    local m_nTickBase = entity.get_prop(me, "m_nTickBase")
+    if m_nTickBase and globals.tickcount() > m_nTickBase then
         ui.set(fakelag_ref, 1)
         return
     end
