@@ -3,6 +3,7 @@ local base64 = require "gamesense/base64"
 local json = require "json"
 local vector = require "vector"
 local c_entity = require "gamesense/entity"
+local exploits = require "gamesense/extended_exploits"
 
 -- ===========================
 -- FFI DEFINITIONS
@@ -540,7 +541,10 @@ local ui_elements = {
     
     -- Visual
     indicator_style = ui.new_combobox("RAGE", "Other", "Indicator Style", {"Simple", "Detailed", "Minimal", "Debug", "Analytics", "Weapon Info"}),
+    clantag = ui.new_checkbox("RAGE", "Other", "Animated Clantag"),
     watermark = ui.new_checkbox("RAGE", "Other", "Watermark"),
+    watermark_color = ui.new_color_picker("RAGE", "Other", "Watermark Color", 150, 200, 255, 255),
+    killsay = ui.new_checkbox("RAGE", "Other", "Guardian Killsay"),
     debug = ui.new_checkbox("RAGE", "Other", "Debug Mode"),
     console_log = ui.new_checkbox("RAGE", "Other", "Console Logging"),
     
@@ -5123,6 +5127,89 @@ local function hint_best_backtrack_tick(player, data)
 end
 
 -- ===========================
+-- CLANTAG ANIMATION SYSTEM
+-- ===========================
+local clantag_base = "guardian release "
+local clantag_suffix = "+"
+local clantag_frames = {}
+
+for i = 1, #clantag_base do
+    table.insert(clantag_frames, clantag_base:sub(1, i) .. clantag_suffix)
+end
+table.insert(clantag_frames, clantag_base .. clantag_suffix)
+for i = #clantag_base - 1, 1, -1 do
+    table.insert(clantag_frames, clantag_base:sub(1, i) .. clantag_suffix)
+end
+
+local last_clantag_frame = -1
+local original_clantag_restored = false
+
+local function handle_clantag()
+    if not ui.get(ui_elements.enable) or not ui.get(ui_elements.clantag) then
+        if not original_clantag_restored then
+            client.set_clan_tag("")
+            original_clantag_restored = true
+            last_clantag_frame = -1
+        end
+        return
+    end
+
+    original_clantag_restored = false
+    local current_frame = math.floor(globals.curtime() * 2.5) % #clantag_frames + 1
+
+    if current_frame ~= last_clantag_frame then
+        client.set_clan_tag(clantag_frames[current_frame])
+        last_clantag_frame = current_frame
+    end
+end
+
+-- ===========================
+-- KILLSAY SYSTEM
+-- ===========================
+local killsay_state = { phrases = {
+    "𝕝𝕚𝕗𝕖 𝕚𝕤 𝕒 𝕘𝕒𝕞𝕖, 𝕤𝕥𝕖𝕒𝕞 𝕝𝕖𝕧𝕖𝕝 𝕚𝕤 𝕙𝕠𝕨 𝕨𝕖 𝕜𝕖𝕖𝕡 𝕥𝕙𝕖 𝕤𝕔𝕠𝕣𝕖 ♛ 𝕞𝕒𝕜𝕖 𝕣𝕚𝕔𝕙 𝕞𝕒𝕚𝕟𝕤, 𝕟𝕠𝕥 𝕗𝕣𝕚𝕖𝕟𝕕𝕤",
+    "𝙒𝙝𝙚𝙣 𝙄'𝙢 𝙥𝙡𝙖𝙮 𝙈𝙈 𝙄'𝙢 𝙥𝙡𝙖𝙮 𝙛𝙤𝙧 𝙬𝙞𝙣, 𝙙𝙤𝙣'𝙩 𝙨𝙘𝙖𝙧𝙚 𝙛𝙤𝙧 𝙨𝙥𝙞𝙣, 𝙞 𝙞𝙣𝙟𝙚𝙘𝙩 𝙧𝙖𝙜𝙚 ♕",
+    "𝒯𝒽𝑒 𝓅𝓇𝑜𝒷𝓁𝑒𝓂 𝒾𝓈 𝓉𝒽𝒶𝓉 𝒾 𝑜𝓃𝓁𝓎 𝒾𝓃𝒿𝑒𝒸𝓉 𝒸𝒽𝑒𝒶𝓉𝓈 𝑜𝓃 𝓂𝓎 𝓂𝒶𝒾𝓃 𝓉𝒽𝒶𝓉 𝒽𝒶𝓋𝑒 𝓃𝒶𝓂𝑒𝓈 𝓉𝒽𝒶𝓉 𝓈𝓉𝒶𝓇𝓉 𝓌𝒾𝓉𝒽 𝓰 𝒶𝓃𝒹 𝑒𝓃𝒹 𝓌𝒾𝓉𝒽 𝓪𝓶𝓮𝓈𝓮𝓃𝓼𝓮",
+    "(◣◢) 𝕐𝕠𝕦 𝕒𝕨𝕒𝕝𝕝 𝕗𝕚𝕣𝕤𝕥? 𝕆𝕜 𝕝𝕖𝕥𝕤 𝕗𝕦𝕟 slightsmile (◣◢)",
+    "ｉ ｃａｎｔ ｌｏｓｅ ｏｎ ｏｆｆｉｃｅ ｉｔ ｍｙ ｈｏｍｅ",
+    "𝕞𝕒𝕚𝕟 𝕟𝕖𝕨= 𝕔𝕒𝕟 𝕓𝕦𝕪.. 𝕙𝕧𝕙 𝕨𝕚𝕟? 𝕕𝕠𝕟𝕥 𝕥𝕙𝕚𝕟𝕜 𝕚𝕞 𝕔𝕒𝕟, 𝕚𝕞 𝕝𝕠𝕒𝕕 𝕣𝕒𝕘𝕖 ♕",
+    "♛Ａｌｌ   Ｆａｍｉｌｙ   ｉｎ   ｇｓ♛",
+    "u will 𝕣𝕖𝕘𝕣𝕖𝕥 rage vs me when i go on ｌｏｌｚ．ｇｕｒｕ acc.",
+    "𝔻𝕠𝕟𝕥 𝕒𝕕𝕕 𝕞𝕖 𝕥𝕠 𝕨𝕒𝕣 𝕠𝕟 𝕞𝕪 𝕤𝕞𝕦𝕣𝕗 (◣◢) 𝕘𝕒𝕞𝕖𝕤𝕖𝕟𝕤𝕖 𝕒𝕝𝕨𝕒𝕪𝕤 𝕣𝕖𝕒𝕕𝕪 ♛",
+    "♛ 𝓽𝓾𝓻𝓴𝓲𝓼𝓱 𝓽𝓻𝓾𝓼𝓽 𝓯𝓪𝓬𝓽𝓸𝓻 ♛",
+    "𝕕𝕦𝕞𝕓 𝕕𝕠𝕘, 𝕪𝕠𝕦 𝕒𝕨𝕒𝕜𝕖 𝕥𝕙𝕖 ᴅʀᴀɢᴏɴ ʜᴠʜ ᴍᴀᴄʜɪɴᴇ, 𝕟𝕠𝕨 𝕪𝕠𝕦 𝕝𝕠𝕤𝕖 𝙖𝙘𝙘 𝕒𝕟𝕕 𝚐𝚊𝚖𝚎 ♕",
+    "♛ 𝕞𝕪 𝕙𝕧𝕙 𝕥𝕖𝕒𝕞 𝕚𝕤 𝕣𝕖𝕒𝕕𝕪 𝕘𝕠 𝟙𝕩𝟙 𝟚𝕩𝟚 𝟛𝕩𝟛 𝟜𝕩𝟜 𝟝𝕩𝟝 (◣◢)",
+    "ᴀɢᴀɪɴ ɴᴏɴᴀᴍᴇ ᴏɴ ᴍʏ ꜱᴛᴇᴀᴍ ᴀᴄᴄᴏᴜɴᴛ. ɪ ꜱᴇᴇ ᴀɢᴀɪɴ ᴀᴄᴛɪᴠɪᴛʏ.",
+    "ɴᴏɴᴀᴍᴇ ʟɪꜱᴛᴇɴ ᴛᴏ ᴍᴇ ! ᴍʏ ꜱᴛᴇᴀᴍ ᴀᴄᴄᴏᴜɴᴛ ɪꜱ ɴᴏᴛ ʏᴏᴜʀ ᴘʀᴏᴘᴇʀᴛʏ.",
+    "𝙏𝙤𝙭𝙞𝙘 𝙘𝙝𝙚𝙖𝙩𝙚𝙧𝙨 𝙘𝙖𝙣'𝙩 𝙡𝙚𝙖𝙫𝙚 𝙖 𝙡𝙚𝙜𝙖𝙘𝙮, 𝙬𝙚 𝙘𝙖𝙣.",
+    "𝕥𝕣𝕪 𝕥𝕠 𝕥𝕖𝕤𝕥 𝕞𝕖? (◣◢) 𝕞𝕪 𝕞𝕚𝕕𝕕𝕝𝕖 𝕟𝕒𝕞𝕖 𝕚𝕤 𝕘𝕖𝕟𝕦𝕚𝕟𝕖 𝕡𝕚𝕟 ♛",
+    "𝓭𝓸𝓷𝓽 𝓝𝓝",
+    "𝕚 𝕘𝕤 𝕦𝕤𝕖𝕣, 𝕟𝕠 𝕘𝕤 𝕟𝕠 𝕥𝕒𝕝𝕜",
+    "𝕠𝕦𝕣 𝕝𝕚𝕗𝕖 𝕞𝕠𝕥𝕠 𝕚𝕤 𝐖𝐈𝐍 > 𝐀𝐂𝐂",
+    "𝕗𝕦𝕔𝕜 𝕪𝕠𝕦𝕣 𝕗𝕒𝕞𝕚𝕝𝕪 𝕒𝕟𝕕 𝕗𝕣𝕚𝕖𝕟𝕕𝕤, 𝕜𝕖𝕖𝕡 𝕥𝕙𝕖 𝕤𝕥𝕖𝕒𝕞 𝕝𝕖𝕧𝕖𝕝 𝕢𝕡 ♚",
+    "𝕤𝕠𝕣𝕣𝕪 𝕔𝕒𝕟𝕥 𝕙𝕖𝕒𝕣 𝕤𝕜𝕖𝕖𝕥𝕝𝕖𝕤𝕤",
+    "𝔂𝓸𝓾 𝓬𝓪𝓶𝓽 𝓺𝓾𝓲𝓬𝓴 𝓹𝓮𝓪𝓴 𝓱𝓿𝓱 𝓴𝓲𝓷𝓰",
+    "ｎｉｃｅ ｔｒｙ ｐｏｏｒ ｄｏｇ",
+    "𝔸𝕃𝕃 𝔻𝕆𝔾𝕊 𝕃𝕆𝕊𝔼 𝕋𝕆 𝔾𝕊",
+    "𝕚𝕟 𝟝𝕧𝕤𝟝 𝕚𝕞 𝕒𝕝𝕨𝕒𝕪𝕤 𝕤𝕡𝕖𝕒𝕜 𝕗𝕠𝕣 𝕥𝕖𝕒𝕞, 𝔻𝕆ℕ𝕋 𝕘𝕠𝕚𝕟𝕘 𝕗𝕠𝕣 𝕙𝕖𝕒𝕕𝕤, 𝔹𝕆𝔻𝕐𝔸𝕀𝕄𝕊, 𝕓𝕦𝕥 𝕕𝕠𝕘𝕤 𝕟𝕖𝕧𝕖𝕣 𝕨𝕒𝕟𝕥 𝕝𝕚𝕤𝕥𝕖𝕟",
+    "Ｙｏｕｒ ｃｈｅａｔ ｉｓ ｎｏｔ ｔｈｅ ｐｒｏｂｌｅｍ， ｂｕｔ ｔｈａｔ ｙｏｕ ｗｅｒｅ ｂｏｒｎ．",
+    "𝘁𝗿𝗮𝘀𝗵 𝘁𝗮𝗹𝗸 𝗹𝘂𝗮? 𝗵𝗮𝗵𝗮𝗵 𝘆𝗼𝘂𝗿𝗲 𝗺𝗼𝘁𝗵𝗲𝗿 𝘁𝗿𝗮𝘀𝗵",
+    "♛ 𝔻𝕠𝕟'𝕥 𝕘𝕖𝕥 𝕔𝕣𝕖𝕒𝕞𝕖𝕕 𝕚𝕗 𝕚 𝕓𝕣𝕖𝕒𝕜 𝕃ℂ ♛",
+    "⌜guardian aa + guardian predict + guardian resolve BOSS MODE ONLINE⌝"
+}, last_time = 0, last_index = 0 }
+
+local function send_killsay()
+    if globals.realtime() - killsay_state.last_time < 0.75 or #killsay_state.phrases == 0 then return end
+    local index = math.random(1, #killsay_state.phrases)
+    if #killsay_state.phrases > 1 and index == killsay_state.last_index then index = index % #killsay_state.phrases + 1 end
+    local phrase = killsay_state.phrases[index]:gsub("[;\r\n\"]", "")
+    if phrase == "" then return end
+    client.exec("say " .. phrase)
+    killsay_state.last_time = globals.realtime()
+    killsay_state.last_index = index
+end
+
+-- ===========================
 -- SMART FAKELAG OPTIMIZER
 -- ===========================
 local ui_fakelag = {
@@ -5141,6 +5228,12 @@ local function optimize_fakelag()
     local fakeduck_key = ui.reference("RAGE", "Other", "Duck peek assist")
     if ui.get(fakeduck_key) then
         ui.set(fakelag_ref, 15)  -- Max fakelag during fakeduck
+        return
+    end
+    
+    -- DT recharge: set fakelag to 1 for fastest recharge
+    if exploits:in_recharge() then
+        ui.set(fakelag_ref, 1)
         return
     end
     
@@ -6082,8 +6175,8 @@ local function draw_watermark()
     local highlight_fraction = (globals.realtime() / 2 % 1.2 * 2) - 1.2
     local output = ""
     
-    local r1, g1, b1 = 150, 200, 255
-    local r2, g2, b2 = 55, 55, 55
+    local r1, g1, b1, a1 = ui.get(ui_elements.watermark_color)
+    local r2, g2, b2 = r1 * 0.25, g1 * 0.25, b1 * 0.25
     
     for idx = 1, #watermark_text do
         local character = watermark_text:sub(idx, idx)
@@ -6103,7 +6196,7 @@ local function draw_watermark()
             b_s = b_s + b_fraction * highlight_delta / 0.8
         end
         
-        output = output .. string.format('\a%02x%02x%02x%02x%s', r_s, g_s, b_s, 255, character)
+        output = output .. string.format('\a%02x%02x%02x%02x%s', math.floor(r_s), math.floor(g_s), math.floor(b_s), a1, character)
     end
     
     renderer.text(x, y, 255, 255, 255, 255, "c", 0, output)
@@ -6941,7 +7034,10 @@ local function handle_menu_visibility()
     safe_set_visible(ui_elements.ai_aggression, enabled and mode == "AI", "ai_aggression")
     safe_set_visible(ui_elements.ai_learning, enabled and mode == "AI", "ai_learning")
     safe_set_visible(ui_elements.indicator_style, enabled and indicator, "indicator_style")
+    safe_set_visible(ui_elements.clantag, enabled, "clantag")
     safe_set_visible(ui_elements.watermark, enabled, "watermark")
+    safe_set_visible(ui_elements.watermark_color, enabled and ui.get(ui_elements.watermark), "watermark_color")
+    safe_set_visible(ui_elements.killsay, enabled, "killsay")
     safe_set_visible(ui_elements.debug, enabled, "debug")
     safe_set_visible(ui_elements.console_log, enabled, "console_log")
 
@@ -7013,6 +7109,7 @@ client.set_event_callback("paint", function()
     -- early exit
     if not ui.get(ui_elements.enable) then return end
 
+    handle_clantag()
     draw_indicator()
     draw_debug_info()
     draw_watermark()
@@ -7084,6 +7181,7 @@ client.set_event_callback("round_start", on_round_start)
 
 client.set_event_callback("player_death", function(e)
     local victim = client.userid_to_entindex(e.userid)
+    local attacker = client.userid_to_entindex(e.attacker)
     if victim and resolver_data[victim] then
         -- Clear plist settings for dead player
         pcall(function()
@@ -7093,8 +7191,11 @@ client.set_event_callback("player_death", function(e)
             plist.set(victim, "Override prefer body aim", "-")
             plist.set(victim, "Override safe point", "-")
             plist.set(victim, "Minimum damage override", 0)
-
         end)
+    end
+    -- Killsay: send a phrase when we kill an enemy
+    if ui.get(ui_elements.enable) and ui.get(ui_elements.killsay) and attacker == entity.get_local_player() then
+        send_killsay()
     end
 end)
 
@@ -7103,6 +7204,8 @@ ui.set_callback(ui_elements.enable, handle_menu_visibility)
 ui.set_callback(ui_elements.mode, handle_menu_visibility)
 ui.set_callback(ui_elements.indicator, handle_menu_visibility)
 ui.set_callback(ui_elements.defensive, handle_menu_visibility)
+ui.set_callback(ui_elements.watermark, handle_menu_visibility)
+ui.set_callback(ui_elements.clantag, handle_menu_visibility)
 
 -- Experimental features - nemu
 ui.set_callback(ui_elements.defensive_peek_fix, handle_menu_visibility)
@@ -7162,6 +7265,9 @@ client.set_event_callback("shutdown", function()
         last_target = nil
     end
     
+    -- Clear clantag
+    client.set_clan_tag("")
+    
     -- Disable all forced body yaw
     local enemies = entity.get_players(true)
     if enemies then
@@ -7176,3 +7282,47 @@ client.set_event_callback("shutdown", function()
     end
     client.log("Guardian Enhanced unloaded")
 end)
+
+-- ===========================
+-- STOP MODULE (for loader unloading)
+-- ===========================
+return {
+    stop = function()
+        -- Disable resolver
+        ui.set(ui_elements.enable, false)
+        
+        -- Restore clantag
+        client.set_clan_tag("")
+        
+        -- Restore mindmg if active
+        if last_mindmg_value ~= nil then
+            restore_mindmg()
+            last_mindmg_value = nil
+            last_target = nil
+        end
+        
+        -- Disable all forced body yaw
+        local enemies = entity.get_players(true)
+        if enemies then
+            for i = 1, #enemies do
+                pcall(function()
+                    plist.set(enemies[i], "Force body yaw", false)
+                    plist.set(enemies[i], "Force body yaw value", 0)
+                    plist.set(enemies[i], "Override prefer body aim", "-")
+                    plist.set(enemies[i], "Override safe point", "-")
+                    plist.set(enemies[i], "Minimum damage override", 0)
+                end)
+            end
+        end
+        
+        -- Clear all resolver data
+        for k, _ in pairs(resolver_data) do resolver_data[k] = nil end
+        for k, _ in pairs(lag_records) do lag_records[k] = nil end
+        for k, _ in pairs(defensive_records) do defensive_records[k] = nil end
+        
+        -- Hide UI
+        pcall(function() ui.set_visible(ui_elements.enable, false) end)
+        
+        client.log("Guardian Enhanced stopped")
+    end
+}
