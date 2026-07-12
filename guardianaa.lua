@@ -9,7 +9,7 @@ if not LPH_OBFUSCATED then
     LPH_NO_VIRTUALIZE = function(...) return ... end
 end
 
-LPH_NO_VIRTUALIZE(function ()
+return LPH_NO_VIRTUALIZE(function ()
     local USERNAME = OBEX.username
     local BUILD = OBEX.build == 'User' and 'beta' or 'stable'
     
@@ -588,6 +588,17 @@ LPH_NO_VIRTUALIZE(function ()
 
             ui.set(ref, unpack(data[ref]))
             data[ref] = nil
+        end
+
+        function override.clear()
+            local refs = {}
+            for ref in pairs(data) do
+                refs[#refs + 1] = ref
+            end
+
+            for i = 1, #refs do
+                override.unset(refs[i])
+            end
         end
     end
 
@@ -6568,4 +6579,29 @@ LPH_NO_VIRTUALIZE(function ()
     end)
     
     menu.update()
+
+    return {
+        stop = function()
+            gui.enabled:set(false)
+            antiaim.shutdown()
+            air_exploit.backups()
+            override.clear()
+            gui.shutdown()
+
+            ui.set(software.visuals.scope_overlay, true)
+            cvar.con_filter_enable:set_raw_int(0)
+            client.set_clan_tag("")
+
+            if shared.socket then
+                pcall(function() shared.socket:close() end)
+                shared.socket = nil
+            end
+            pcall(shared.attach, true)
+
+            local items = menu.get_items()
+            for i = 1, #items do
+                pcall(ui.set_visible, items[i].ref, false)
+            end
+        end
+    }
 end)()
