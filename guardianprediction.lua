@@ -122,7 +122,6 @@ local function load_config_values(cfg)
     if cfg.adaptive then ui.set(ui_elements.adaptive_options, cfg.adaptive) end 
     if cfg.min_speed then ui.set(ui_elements.min_speed, cfg.min_speed) end 
     if cfg.max_ping then ui.set(ui_elements.max_ping, cfg.max_ping) end 
-    if cfg.anti_defensive ~= nil then ui.set(ui_elements.anti_defensive, cfg.anti_defensive) end 
     if cfg.defensive_strength then ui.set(ui_elements.defensive_strength, cfg.defensive_strength) end 
     if cfg.defensive_options then ui.set(ui_elements.anti_defensive_options, cfg.defensive_options) end 
 end
@@ -296,19 +295,19 @@ end
 -- EXPLOIT-AWARE PACKET INTERACTION SUBROUTINES
 -- ============================================================================
 local function handle_anti_defensive(cmd)
+    exploit_force_defensive(false)
+
     if not ui.get(ui_elements.anti_defensive) then 
-        exploit_force_defensive(false) 
         return 
     end
     
     local local_player = entity.get_local_player() 
     if not local_player or not entity.is_alive(local_player) then 
-        exploit_force_defensive(false) 
         return 
     end
     
     local target = client.current_threat() 
-    if not target or not exploit_is_active() or exploit_in_defensive() or exploit_in_recharge() then 
+    if not target or not exploit_is_doubletap() or exploit_in_defensive() or exploit_in_recharge() then 
         return 
     end
     
@@ -316,7 +315,6 @@ local function handle_anti_defensive(cmd)
     local sim_time = safe_get_prop(target, "m_flSimulationTime") 
     local old_sim = safe_get_prop(target, "m_flOldSimulationTime") 
     if not sim_time or not old_sim then 
-        exploit_force_defensive(false) 
         return 
     end
     
@@ -466,7 +464,10 @@ client.set_event_callback("setup_command", function(cmd)
     
     handle_anti_defensive(cmd)
 
-    cmd.force_defensive = pending_force_defensive
+    -- Never write false here: another AA script may have already requested defensive.
+    if pending_force_defensive then
+        cmd.force_defensive = true
+    end
     
     local prediction_data = enhanced_prediction(cmd) 
     if prediction_data then
@@ -524,19 +525,3 @@ ui.set_callback(ui_elements.anti_defensive_options, handle_menu_visibility)
 ui.set_callback(ui_elements.unsafe_charge, handle_menu_visibility) 
 ui.set_callback(ui_elements.lc_break_mode, handle_menu_visibility) 
 handle_menu_visibility()
-
-return {
-    stop = function()
-        ui.set(ui_elements.enable, false)
-        exploit_force_defensive(false)
-        exploit_allow_unsafe(false)
-
-        velocity_history = {}
-        prediction_records = {}
-        config_cache = nil
-
-        for _, ref in pairs(ui_elements) do
-            pcall(ui.set_visible, ref, false)
-        end
-    end
-}
