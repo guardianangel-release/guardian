@@ -501,6 +501,7 @@ local ui_elements = {
         "Prediction Fix",
         "Layer Correlation"
     }),
+    predictive_autostop = ui.new_checkbox("RAGE", "Other", "Predictive Autostop [EXPERIMENTAL]"),
     
     -- Bruteforce
     brute_mode = ui.new_combobox("RAGE", "Other", "Brute Mode", {"Sequential", "Random", "Smart", "Adaptive", "Intelligent"}),
@@ -6429,6 +6430,91 @@ end)
 -- ===========================
 -- SETUP COMMAND (DEFENSIVE PEEK + FAKELAG)
 -- ===========================
+local firearm_ids = {1, 2, 3, 4, 7, 8, 9, 10, 11, 13, 14, 16, 17, 19, 24, 25, 26, 27, 28, 29, 30, 32, 33, 34, 35, 36, 38, 39, 40, 60, 61, 63, 64}
+local pistol_ids = {1, 2, 3, 4, 30, 32, 36, 61, 63, 64}
+local sniper_ids = {9, 11, 38, 40}
+local autostop_was_viable = false
+local autostop_last_threat = nil
+local autostop_burst_until = 0
+
+local function apply_predictive_autostop(cmd, threat)
+    if not ui.get(ui_elements.predictive_autostop) or not threat or not entity.is_alive(threat) or entity.is_dormant(threat) then
+        autostop_was_viable = false
+        autostop_last_threat = nil
+        return
+    end
+
+    local me = entity.get_local_player()
+    if not me or not entity.is_alive(me) then return end
+
+    local flags = entity.get_prop(me, "m_fFlags") or 0
+    local move_type = entity.get_prop(me, "m_MoveType")
+    if bit.band(flags, 1) == 0 or move_type == 8 or move_type == 9 then return end
+
+    local weapon = entity.get_player_weapon(me)
+    if not weapon then return end
+    local weapon_id = bit.band(entity.get_prop(weapon, "m_iItemDefinitionIndex") or 0, 0xFFFF)
+    if not contains(firearm_ids, weapon_id) then return end
+
+    local clip = entity.get_prop(weapon, "m_iClip1")
+    if clip ~= nil and clip <= 0 then return end
+
+    local ready_at = math.max(
+        entity.get_prop(me, "m_flNextAttack") or 0,
+        entity.get_prop(weapon, "m_flNextPrimaryAttack") or 0
+    )
+    if ready_at > globals.curtime() + globals.tickinterval() * 3 then return end
+
+    local eye_x, eye_y, eye_z = client.eye_position()
+    if not eye_x then return end
+    local viable = false
+    local hitboxes = contains(pistol_ids, weapon_id) and {0} or {0, 2, 4}
+    for _, hitbox in ipairs(hitboxes) do
+        local hit_x, hit_y, hit_z = entity.hitbox_position(threat, hitbox)
+        if hit_x then
+            local hit_entity, damage = client.trace_bullet(me, eye_x, eye_y, eye_z, hit_x, hit_y, hit_z, false)
+            if hit_entity == threat and damage and damage > 0 then
+                viable = true
+                break
+            end
+        end
+    end
+    if not viable then
+        autostop_was_viable = false
+        return
+    end
+
+    local tick = globals.tickcount()
+    if not autostop_was_viable or autostop_last_threat ~= threat then
+        local stop_ticks = contains(sniper_ids, weapon_id) and 12 or (contains(pistol_ids, weapon_id) and 5 or 8)
+        autostop_burst_until = tick + stop_ticks
+    end
+    autostop_was_viable = true
+    autostop_last_threat = threat
+
+    local attacking = cmd.in_attack == 1 or cmd.in_attack == true
+    if tick > autostop_burst_until and not attacking then return end
+
+    local vx, vy = entity.get_prop(me, "m_vecVelocity")
+    if not vx or not vy then return end
+    local speed = math.sqrt(vx * vx + vy * vy)
+    if speed < 5 then
+        autostop_burst_until = tick - 1
+        return
+    end
+
+    local view_yaw = cmd.yaw
+    if view_yaw == nil then
+        local _, camera_yaw = client.camera_angles()
+        view_yaw = camera_yaw or 0
+    end
+
+    local direction = math.rad(view_yaw - math.deg(math.atan2(vy, vx)))
+    local counter_speed = speed < 34 and math.min(450, speed * 12) or 450
+    cmd.forwardmove = math.cos(direction) * -counter_speed
+    cmd.sidemove = math.sin(direction) * -counter_speed
+end
+
 client.set_event_callback("setup_command", function(cmd)
     if not ui.get(ui_elements.enable) then return end
     
@@ -6447,6 +6533,8 @@ client.set_event_callback("setup_command", function(cmd)
     if force_defensive then
         cmd.force_defensive = true
     end
+
+    apply_predictive_autostop(cmd, client.current_threat())
 
     -- ✅ FIXED: Apply smart baim FIRST, then check defensive delay
     local enemies = entity.get_players(true)
@@ -6793,6 +6881,7 @@ function config_system.get_current_config()
         detection = ui.get(ui_elements.detection),
         defensive = ui.get(ui_elements.defensive),
         defensive_options = ui.get(ui_elements.defensive_options),
+        predictive_autostop = ui.get(ui_elements.predictive_autostop),
         brute_mode = ui.get(ui_elements.brute_mode),
         brute_phases = ui.get(ui_elements.brute_phases),
         brute_reset = ui.get(ui_elements.brute_reset),
@@ -6828,6 +6917,9 @@ function config_system.apply_config(config)
     ui.set(ui_elements.detection, config.detection)
     ui.set(ui_elements.defensive, config.defensive)
     ui.set(ui_elements.defensive_options, config.defensive_options)
+    if config.predictive_autostop ~= nil then
+        ui.set(ui_elements.predictive_autostop, config.predictive_autostop)
+    end
     ui.set(ui_elements.brute_mode, config.brute_mode)
     ui.set(ui_elements.brute_phases, config.brute_phases)
     ui.set(ui_elements.brute_reset, config.brute_reset)
@@ -7021,6 +7113,7 @@ local function handle_menu_visibility()
     safe_set_visible(ui_elements.detection, enabled and (mode == "Smart" or mode == "Automatic" or mode == "Adaptive" or mode == "AI"), "detection")
     safe_set_visible(ui_elements.defensive, enabled, "defensive")
     safe_set_visible(ui_elements.defensive_options, enabled and defensive, "defensive_options")
+    safe_set_visible(ui_elements.predictive_autostop, enabled, "predictive_autostop")
     safe_set_visible(ui_elements.brute_mode, enabled and (mode == "Bruteforce" or mode == "Adaptive" or mode == "AI"), "brute_mode")
     safe_set_visible(ui_elements.brute_phases, enabled and (mode == "Bruteforce" or mode == "Adaptive" or mode == "AI"), "brute_phases")
     safe_set_visible(ui_elements.brute_reset, enabled and (mode == "Bruteforce" or mode == "Adaptive" or mode == "AI"), "brute_reset")
