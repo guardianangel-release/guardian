@@ -141,6 +141,27 @@ local function angle_diff(a, b)
     return normalize_angle(a - b)
 end
 
+local function is_valid_enemy_target(player)
+    if type(player) ~= "number" or player <= 0 or player == entity.get_local_player() then return false end
+    local ok, is_enemy = pcall(entity.is_enemy, player)
+    return ok and is_enemy == true
+end
+
+local function get_valid_current_threat()
+    local threat = client.current_threat()
+    return is_valid_enemy_target(threat) and threat or nil
+end
+
+local function safe_plist_set(player, field, value)
+    if not is_valid_enemy_target(player) then return false end
+
+    local ok, err = pcall(function()
+        plist.set(player, field, value)
+    end)
+
+    return ok
+end
+
 local function create_circular_buffer(size)
     return {
         data = {}, index = 1, size = size, max_index = 0,
@@ -178,7 +199,6 @@ local groups = {
 local ui = {}
 
 ui.enable = groups.main:checkbox("Enable Guardian Enhanced")
-ui.accent = groups.main:color_picker("Accent Color", 100, 200, 255, 255)
 ui.tabs = groups.main:combobox("Tab", {"Home", "Resolver", "Anti-Aim", "Rage", "Visuals", "Config"})
 
 -- Home Tab Configuration
@@ -189,35 +209,26 @@ ui.home.indicator = groups.main:checkbox("Show Indicators")
 
 -- Resolver Tab Configuration
 ui.resolver = {}
-ui.resolver.detection = groups.resolver:multiselect("Detection Methods", {
-    "Animation Analysis", "Movement Tracking", "LBY Analysis", "Velocity Prediction",
-    "Pose Parameters", "Layer Weight", "Micro Movement", "Standing Detection", 
-    "Pattern Recognition", "Desync Break Detection"
-})
 ui.resolver.brute_mode = groups.resolver:combobox("Brute Mode", {"Sequential", "Random", "Smart", "Adaptive", "Intelligent"})
 ui.resolver.brute_phases = groups.resolver:slider("Brute Phases", 2, 7, 5, true)
 ui.resolver.brute_reset = groups.resolver:slider("Reset After", 1, 5, 3, true)
 ui.resolver.advanced = groups.resolver:multiselect("Advanced Features", {
-    "Anti-Freestand", "Body Aim Fix", "Low Delta Detect", "Jitter Detection",
-    "Micro Movement", "Standing Resolver", "Smart Prediction", "Animation Fix",
-    "Pattern Analysis", "Context Awareness", "Peek Prediction", "Adaptive Learning", "Weapon Awareness"
+    "Low Delta Detect", "Adaptive Learning", "Weapon Awareness"
 })
 ui.resolver.override_left = groups.resolver:hotkey("Force Left")
 ui.resolver.override_right = groups.resolver:hotkey("Force Right")
 ui.resolver.override_center = groups.resolver:hotkey("Force Center")
-ui.resolver.desync_strength = groups.resolver:slider("Desync Strength", 1, 100, 60, true, "%")
 ui.resolver.confidence = groups.resolver:slider("Confidence Threshold", 50, 100, 75, true, "%")
-ui.resolver.reaction_time = groups.resolver:slider("Reaction Time", 0, 100, 20, true, "ms")
-ui.resolver.ai_aggression = groups.resolver:slider("AI Aggression", 0, 100, 50, true, "%")
 ui.resolver.ai_learning = groups.resolver:slider("AI Learning Rate", 0, 100, 75, true, "%")
 
 -- Defensive Tab Configuration
 ui.defensive = {}
 ui.defensive.enable = groups.defensive:checkbox("Defensive Resolver")
-ui.defensive.options = groups.defensive:multiselect("Defensive Options", {
-    "Simulation Check", "Lag Compensation", "Velocity Exploit", "Teleport Detection", 
-    "Smart Backtrack", "Prediction Fix", "Layer Correlation"
+ui.defensive.strategy = groups.defensive:combobox("Analysis Strategy", {"Balanced", "Aggressive", "Stable", "Custom"})
+ui.defensive.signals = groups.defensive:multiselect("Analysis Signals", {
+    "Simulation", "Choke", "Eye Angles", "Pitch", "Spin", "Animation Layers"
 })
+ui.defensive.min_confidence = groups.defensive:slider("Detection Confidence", 80, 100, 92, true, "%")
 ui.defensive.peek_fix = groups.defensive:checkbox("Force Defensive on Peek")
 ui.defensive.peek_time = groups.defensive:slider("Peek Prediction", 50, 500, 250, true, "ms")
 ui.defensive.peek_min_damage = groups.defensive:slider("Minimum Peek Damage", 10, 100, 25, true, "hp")
@@ -242,24 +253,25 @@ ui.rage.predictive_autostop = groups.rage:checkbox("Predictive Autostop [EXPERIM
 -- Visuals Tab Configuration
 ui.visuals = {}
 ui.visuals.clantag = groups.visuals:checkbox("Clantag")
-ui.visuals.watermark = groups.visuals:checkbox("Watermark Rendering")
+ui.visuals.watermark = groups.visuals:checkbox("Watermark")
 ui.visuals.watermark_color = groups.visuals:color_picker("Watermark Color", 150, 200, 255, 255)
 ui.visuals.indicator_style = groups.visuals:combobox("Indicator Style", {"Simple", "Detailed", "Minimal", "Debug", "Analytics", "Weapon Info"})
 ui.visuals.resolver_flags = groups.visuals:checkbox("Resolver ESP Flags")
 ui.visuals.show_lethal_flag = groups.visuals:checkbox("Show Lethal ESP Flag")
 ui.visuals.lethal_flag_style = groups.visuals:combobox("Lethal Flag Style", {"Simple", "Detailed", "Box highlight", "All"})
 ui.visuals.lethal_flag_color = groups.visuals:color_picker("Lethal Flag Color", 255, 0, 0, 255)
-ui.visuals.debug = groups.visuals:checkbox("Debug Core Overlay")
-ui.visuals.console_log = groups.visuals:checkbox("Console Internal Logging")
+ui.visuals.debug = groups.visuals:checkbox("debug visual")
+ui.visuals.learning_debug = groups.visuals:checkbox("learning state debug")
+ui.visuals.console_log = groups.visuals:checkbox("Console logging")
 ui.visuals.killsay = groups.visuals:checkbox("Guardian Killsay")
 
 -- Config Tab Configuration
 ui.config = {}
-ui.config.preset = groups.config:combobox("Config Preset", {"Custom", "Default", "Aggressive", "Defensive"})
+ui.config.preset = groups.config:combobox("Config Preset", {"Default"})
 ui.config.description = groups.config:label("Select a preset configuration profile")
 ui.config.load = groups.config:button("Load Selective Profile")
-ui.config.export = groups.config:button("Export Configuration Matrix")
-ui.config.import = groups.config:button("Import Configuration Matrix")
+ui.config.export = groups.config:button("Export Configuration")
+ui.config.import = groups.config:button("Import Configuration")
 
 -- Dependencies Handling
 pui.traverse({ui.resolver, ui.defensive, ui.rage, ui.visuals, ui.config}, function(item)
@@ -294,7 +306,7 @@ ui.killsay_state = { phrases = {
     "𝚜𝚎𝚖𝚒𝚛𝚊𝚐𝚎 𝚝𝚒𝚕𝚕 𝚢𝚘𝚞 𝚍𝚒𝚎, 𝚋𝚞𝚝 𝚠𝚎 𝚕𝚒𝚟𝚎 𝚏𝚘𝚛𝚎𝚟𝚎𝚛 (◣◢)",
     "𝔂𝓸𝓾 𝓭𝓸𝓷𝓽 𝓷𝓮𝓮𝓭 𝓯𝓻𝓲𝓮𝓷𝓭𝓼 𝔀𝓱𝓮𝓷 𝔂𝓸𝓾 𝓱𝓪𝓿𝓮 𝓰𝓪𝓶𝓮𝓼𝓮𝓷𝓼𝓮",
     "-ᴀᴄᴄ? ᴡʜᴏ ᴄᴀʀꜱ ɪᴍ ʀɪᴄʜ ʜʜʜʜʜʜ",
-    "𝚢𝚘𝚞 𝚊𝚠𝚊𝕝𝕝 𝚏𝚒𝚛𝚜𝚝? 𝚘𝚔 𝚕𝚎𝚝𝚜 𝚏𝚞𝚗 :)",
+    "𝚢𝚘𝚞 𝚊𝚠𝚊𝚕𝕝 𝚏𝚒𝚛𝚜𝚝? 𝚘𝚔 𝚕𝚎𝚝𝚜 𝚏𝚞𝚗 :)",
     "𝕤𝕠𝕣𝕣𝕪 𝕔𝕒𝕟𝕥 𝕙𝕖𝕒𝕣 𝕤𝕜𝕖𝕖𝕥𝕝𝕖𝕤𝕤",
     "𝔂𝓸𝓾 𝓬𝓪𝓶𝓽 𝓺𝓾𝓲𝓬𝓴 𝓹𝓮𝓪𝓴 𝓱𝓿𝓱 𝓴𝓲𝓷𝓰",
     "ｎｉｃｅ ｔｒｙ ｐｏｏｒ ｄｏｇ",
@@ -314,6 +326,7 @@ ui.killsay_state = { phrases = {
 }, last_time = 0, last_index = 0 }
 
 local resolver_data = {}
+local learning_profiles = {}
 local lag_records = {}
 local defensive_records = {}
 local speed_cache = {}
@@ -325,6 +338,49 @@ local defensive_check_cache = {}
 local defensive_check_time = {}
 local resolver_cache = {}
 local prev_simtime = {}
+local choke_cache = {}
+local choke_cache_tick = {}
+
+function ui.clear_player_runtime(player)
+    resolver_data[player] = nil
+    lag_records[player] = nil
+    defensive_records[player] = nil
+    speed_cache[player], speed_cache_time[player] = nil, nil
+    damage_cache[player], damage_cache_time[player] = nil, nil
+    eye_angle_data[player] = nil
+    resolver_cache[player] = nil
+    defensive_check_cache[player], defensive_check_time[player] = nil, nil
+    prev_simtime[player] = nil
+    choke_cache[player], choke_cache_tick[player] = nil, nil
+end
+
+local function new_learning_state()
+    return {
+        method_weights = { lby_delta = 0.25, movement = 0.20, animation = 0.15, velocity = 0.15, historical = 0.15, pattern = 0.10 },
+        analytics = { method_success = {}, angle_success = {}, timing_success = {}, total_resolves = 0, successful_resolves = 0, overall_success_rate = 0 },
+        brute_aggression = 0.5,
+        angle_results = {},
+        roll_hits = 0,
+        roll_misses = 0
+    }
+end
+
+local function get_learning_profile(player)
+    local steam64 = entity.get_steam64(player)
+    local steam_key = steam64 and tostring(steam64) or nil
+    if not steam_key or steam_key == "0" then
+        steam_key = "bot:" .. tostring(player) .. ":" .. tostring(entity.get_player_name(player) or "unknown")
+    end
+    if not learning_profiles[steam_key] then learning_profiles[steam_key] = { states = {} } end
+    return learning_profiles[steam_key]
+end
+
+local function get_learning_state(player, state_name)
+    local profile = get_learning_profile(player)
+    if not profile then return nil end
+    if not profile.states[state_name] then profile.states[state_name] = new_learning_state() end
+    return profile.states[state_name]
+end
 
 local entity_cache = {}
 local entity_cache_time = {}
@@ -336,7 +392,6 @@ local RESOLVER_CACHE_TICKS = 0
 
 local last_target = nil
 local last_mindmg_value = nil
-local original_mindmg_per_weapon = {}
 local last_weapon_id = nil
 local last_peek_check = 0
 local last_peek_result = false
@@ -351,21 +406,42 @@ local f_duck_ref = pui.reference("RAGE", "Other", "Duck peek assist")
 -- ============================================================================
 -- HARDWARE INTERFACE CONNECTIONS
 -- ============================================================================
-local entity_list = ffi.cast("void***", client.create_interface("client.dll", "VClientEntityList003"))
+local raw_entity_list = client.create_interface("client.dll", "VClientEntityList003")
+if not raw_entity_list then
+    error("Guardian: failed to get VClientEntityList003")
+end
+
+local entity_list = ffi.cast("void***", raw_entity_list)
 local get_client_entity = ffi.cast("get_client_entity_t", entity_list[0][3])
 
 local function get_entity_address(index)
-    return get_client_entity(entity_list, index)
+    if not is_valid_enemy_target(index) then return nil end
+    local ptr = get_client_entity(entity_list, index)
+    return ptr ~= nil and ptr ~= ffi.NULL and ptr or nil
 end
 
 local function get_anim_state(entity_ptr)
-    if not entity_ptr then return nil end
-    return ffi.cast("CCSGOPlayerAnimationState_t**", ffi.cast("uintptr_t", entity_ptr) + 0x9960)[0]
+    if not entity_ptr or entity_ptr == ffi.NULL then return nil end
+    local ptr = ffi.cast("CCSGOPlayerAnimationState_t**", ffi.cast("uintptr_t", entity_ptr) + 0x9960)[0]
+    return ptr ~= nil and ptr ~= ffi.NULL and ptr or nil
 end
 
 local function get_anim_layers(entity_ptr)
-    if not entity_ptr then return nil end
-    return ffi.cast("C_AnimationLayer**", ffi.cast("uintptr_t", entity_ptr) + 0x2990)[0]
+    if not entity_ptr or entity_ptr == ffi.NULL then return nil end
+    local ptr = ffi.cast("C_AnimationLayer**", ffi.cast("uintptr_t", entity_ptr) + 0x2990)[0]
+    return ptr ~= nil and ptr ~= ffi.NULL and ptr or nil
+end
+
+local function valid_anim_value(v, min, max)
+    return v ~= nil and v == v and v >= min and v <= max
+end
+
+local function valid_anim_layer(layer)
+    if not layer then return false end
+
+    return valid_anim_value(layer.m_weight, 0, 1)
+        and valid_anim_value(layer.m_cycle, 0, 1)
+        and valid_anim_value(layer.m_playback_rate, 0, 20)
 end
 
 -- ============================================================================
@@ -391,15 +467,32 @@ local function get_cached_prop(ent, prop, default)
 end
 
 local function get_choke_from_simtime(player)
+    local tick = globals.tickcount()
+    if choke_cache_tick[player] == tick then
+        return choke_cache[player] or 0
+    end
+
     local sim = entity.get_prop(player, "m_flSimulationTime")
-    if not sim then return 0 end
+    if not sim then
+        choke_cache[player] = 0
+        choke_cache_tick[player] = tick
+        return 0
+    end
+
     local last = prev_simtime[player]
-    prev_simtime[player] = sim
-    if not last then return 0 end
-    local dt = sim - last
-    if dt <= 0 then return 0 end
-    local choke = math.floor(dt / globals.tickinterval())
-    return choke < 0 and 0 or choke
+    local choke = 0
+
+    if last ~= nil and sim > last then
+        choke = math.max(0, math.floor((sim - last) / globals.tickinterval()))
+    end
+
+    if last ~= sim then
+        prev_simtime[player] = sim
+    end
+
+    choke_cache[player] = choke
+    choke_cache_tick[player] = tick
+    return choke
 end
 
 local function get_player_speed_cached(player)
@@ -495,7 +588,13 @@ local function get_weapon_type(weapon_ent)
     return "unknown"
 end
 
-local function count_teammates() return #(entity.get_players(false) or {}) end
+local function count_teammates()
+    local count = 0
+    for _, player in ipairs(entity.get_players(false) or {}) do
+        if player ~= entity.get_local_player() and not entity.is_enemy(player) then count = count + 1 end
+    end
+    return count
+end
 local function count_enemies() return #(entity.get_players(true) or {}) end
 
 local function get_nearest_site(x, y, z)
@@ -575,13 +674,38 @@ local function get_dynamic_body_yaw(player)
     local min_yaw = -60
     local max_yaw = 60
     
-    if anim then
+    if anim
+        and valid_anim_value(anim.flMinBodyYaw, -180, 180)
+        and valid_anim_value(anim.flMaxBodyYaw, -180, 180)
+        and anim.flMaxBodyYaw > anim.flMinBodyYaw
+    then
         min_yaw = anim.flMinBodyYaw
         max_yaw = anim.flMaxBodyYaw
     end
     
     -- Map the 0.0 to 1.0 pose parameter cleanly into the true structural bounds
     return by * (max_yaw - min_yaw) + min_yaw
+end
+
+function ui.get_effective_desync_limit(player, speed)
+    speed = speed or get_player_speed_cached(player)
+    local flags = entity.get_prop(player, "m_fFlags") or 0
+    local duck = clamp(entity.get_prop(player, "m_flDuckAmount") or 0, 0, 1)
+
+    if bit.band(flags, 1) == 0 then return duck > 0.5 and 38 or 48 end
+
+    local dynamic = math_abs(get_dynamic_body_yaw(player) or 0)
+    -- A centered/missing pose proves neither low nor maximum desync.
+    local base = dynamic >= 5 and dynamic or 45
+    local scale
+    if speed <= 5 then scale = 1
+    elseif speed <= 40 then scale = 1 - ((speed - 5) / 35) * 0.25
+    elseif speed <= 100 then scale = 0.75 - ((speed - 40) / 60) * 0.13
+    elseif speed <= 180 then scale = 0.62 - ((speed - 100) / 80) * 0.12
+    elseif speed <= 260 then scale = 0.50 - ((speed - 180) / 80) * 0.12
+    else scale = 0.38 end
+
+    return clamp(base * scale * (1 - duck * 0.18), 18, 50)
 end
 
 -- ============================================================================
@@ -625,9 +749,14 @@ local function extrapolate_position(xpos, ypos, zpos, ticks, player, data)
 end
 
 local function get_adaptive_extrapolation_ticks(player, data)
-    local ping = entity.get_prop(player, "m_iPing")
-    if not ping then return 4 end
-    return math.min(4 + math.floor((ping + get_local_ping()) / 30) + math.min(get_choke_from_simtime(player) / 2, 4), 12)
+    local ping = get_player_ping(player)
+    local local_ping = get_local_ping()
+    local choke = get_choke_from_simtime(player)
+
+    return math.min(
+        4 + math.floor((ping + local_ping) / 30) + math.min(choke / 2, 4),
+        12
+    )
 end
 
 local baim_hitboxes = {3, 4, 5, 6}
@@ -737,11 +866,23 @@ local function should_force_defensive_peek()
                 local p_head_y = hy + (evy * time_pred)
                 local p_head_z = hz + (evz * time_pred)
                 
-                local frac, ent = client.trace_line(local_player, p_eye_x, p_eye_y, p_eye_z, p_head_x, p_head_y, p_head_z)
-                if frac < 1.0 and ent == player then
-                    local _, damage = client.trace_bullet(local_player, p_eye_x, p_eye_y, p_eye_z, p_head_x, p_head_y, p_head_z)
+                local frac, ent = client.trace_line(
+                    local_player,
+                    p_eye_x, p_eye_y, p_eye_z,
+                    p_head_x, p_head_y, p_head_z
+                )
+
+                if ent == player or frac == 1.0 then
+                    local _, damage = client.trace_bullet(
+                        local_player,
+                        p_eye_x, p_eye_y, p_eye_z,
+                        p_head_x, p_head_y, p_head_z
+                    )
+
                     if damage and damage >= min_dmg then
-                        last_peek_result = true; last_peek_check = tickcount; return true
+                        last_peek_result = true
+                        last_peek_check = tickcount
+                        return true
                     end
                 end
             end
@@ -760,7 +901,7 @@ local function init_player_data(player)
         misses = 0, hits = 0, shots = 0, hit_rate = 0, brute_phase = 1, brute_locked = false, brute_working = false,
         last_update = globals.tickcount(), last_resolve = 0, desync_side = 0, predicted_side = 0, last_lby = 0,
         lby_delta = 0, last_simtime = 0, last_velocity = {x = 0, y = 0, z = 0}, standing_ticks = 0, moving_ticks = 0,
-        confidence = 0, reliability = 0, is_defensive = false, defensive_ticks = 0, defensive_active = false,
+        confidence = 0, reliability = 0, is_defensive = false, defensive_confirmed = false, defensive_ticks = 0, defensive_active = false,
         resolved_angle = 0, body_yaw = 0, last_layers = {}, last_anim_state = nil, last_position = nil,
         movement_delta = 0, layer_data = { move_weight = 0, move_cycle = 0, stand_cycle = 0 }, recent_angles = {},
         patterns = { oscillation = false, consistent_side = 0, mean_angle = 0, variability = 0 },
@@ -786,7 +927,66 @@ local function init_player_data(player)
         last_good_angle = 0, defensive_suspicious = false, defensive_suspicion_score = 0, local_ping = 50, effective_ping = 50,
         air_state = nil, crouch_state = nil, sim_history = {}, pitch_history = {}, pitch_exploit_detected = false
     }
+
+    local learning_state = get_learning_state(player, "standing")
+    if learning_state then
+        resolver_data[player].learning_state = "standing"
+        resolver_data[player].method_weights = learning_state.method_weights
+        resolver_data[player].analytics = learning_state.analytics
+        resolver_data[player].brute_aggression = learning_state.brute_aggression
+    end
     return resolver_data[player]
+end
+
+local function classify_learning_state(player, data)
+    local flags = entity.get_prop(player, "m_fFlags") or 0
+    local duck = entity.get_prop(player, "m_flDuckAmount") or 0
+    local vx, vy = entity.get_prop(player, "m_vecVelocity")
+    local speed = (vx and vy) and math.sqrt(vx * vx + vy * vy) or 0
+    local airborne = bit.band(flags, 1) == 0
+    local crouched = duck > 0.55
+    local candidate
+    if airborne or crouched or speed < 5 then data.learning_slowwalk_ticks = 0 end
+
+    if airborne then
+        candidate = crouched and "air_crouch" or "air"
+    elseif speed < 5 then
+        candidate = crouched and "crouching" or "standing"
+    elseif crouched then
+        candidate = "crouch_moving"
+    else
+        local speed_delta = math.abs(speed - (data.learning_last_speed or speed))
+        local slowwalk_candidate = speed >= 20 and speed <= 110 and speed_delta < 8
+        data.learning_slowwalk_ticks = slowwalk_candidate and ((data.learning_slowwalk_ticks or 0) + 1) or 0
+        candidate = data.learning_slowwalk_ticks >= 3 and "slowwalk" or "moving"
+    end
+    data.learning_last_speed = speed
+
+    if candidate ~= data.learning_state_candidate then
+        data.learning_state_candidate = candidate
+        data.learning_state_candidate_ticks = 1
+    else
+        data.learning_state_candidate_ticks = (data.learning_state_candidate_ticks or 0) + 1
+    end
+
+    if not data.learning_state or data.learning_state_candidate_ticks >= 3 or airborne then
+        data.learning_state = candidate
+    end
+
+    local roll = entity.get_prop(player, "m_angEyeAngles[2]") or 0
+    data.roll_suspected = math.abs(roll) > 5
+    data.observed_roll = roll
+    return data.learning_state
+end
+
+local function activate_learning_state(player, data, state_name)
+    local state = get_learning_state(player, state_name)
+    if not state then return nil end
+    data.learning_state = state_name
+    data.method_weights = state.method_weights
+    data.analytics = state.analytics
+    data.brute_aggression = state.brute_aggression
+    return state
 end
 
 local function init_lag_record(player)
@@ -817,17 +1017,10 @@ local function get_local_weapon_id()
     return weapon and entity.get_prop(weapon, "m_iItemDefinitionIndex") or nil
 end
 
-local function save_current_mindmg()
-    local weapon_id = get_local_weapon_id()
-    if not weapon_id or not ref_mindmg then return end
-    if last_mindmg_value == nil then original_mindmg_per_weapon[weapon_id] = ref_mindmg:get() end
-end
-
 local function restore_mindmg()
-    local weapon_id = get_local_weapon_id()
-    if not weapon_id or not ref_mindmg then return end
-    local saved = original_mindmg_per_weapon[weapon_id]
-    if saved then ref_mindmg:set(saved) end
+    if ref_mindmg then ref_mindmg:override() end
+    last_mindmg_value = nil
+    last_target = nil
 end
 
 local function calculate_shot_accuracy(player)
@@ -965,19 +1158,44 @@ local function get_ping_thresholds(enemy_ping, local_ping)
 end
 
 local function is_using_antiaim(player)
-    if not player or not entity.is_alive(player) then return false end
+    if not player or not entity.is_alive(player) then
+        return false
+    end
+
     local data = init_player_data(player)
-    if data.aa_detected then return true end
-    if data.aa_check_result ~= nil and globals.tickcount() - (data.aa_check_time or 0) < AA_CHECK_CACHE_DURATION then return data.aa_check_result end
-    data.aa_check_time = globals.tickcount()
-    local ey, by = entity.get_prop(player, "m_angEyeAngles[1]"), entity.get_prop(player, "m_flLowerBodyYawTarget")
-    if ey and by and math.abs(angle_diff(ey, by)) > 20 then data.aa_detected = true; data.aa_check_result = true; return true end
-    data.aa_check_result = false; return true
+    local tick = globals.tickcount()
+
+    -- Use cached result for a short time
+    if data.aa_check_result ~= nil and tick - (data.aa_check_time or 0) < AA_CHECK_CACHE_DURATION then
+        return data.aa_check_result
+    end
+
+    data.aa_check_time = tick
+
+    local eye_yaw = entity.get_prop(player, "m_angEyeAngles[1]")
+    local lby = entity.get_prop(player, "m_flLowerBodyYawTarget")
+
+    local detected = false
+
+    if eye_yaw and lby then
+        local delta = math.abs(angle_diff(eye_yaw, lby))
+
+        -- Basic anti-aim/desync check
+        if delta > 20 then
+            detected = true
+        end
+    end
+
+    data.aa_detected = detected
+    data.aa_check_result = detected
+
+    return detected
 end
 
 local function is_valid_defensive_detection(player, data, detection)
-    if not detection or not detection.detected or exploits:in_defensive() or exploits:in_recharge() then return false end
-    if (exploits:is_lagcomp_broken() and 92 or 85) < 85 then return false end
+    local local_player = entity.get_local_player()
+    if not player or player == local_player or not entity.is_alive(player) then return false end
+    if not detection or not detection.detected then return false end
     if data.last_damage_time and (globals.curtime() - data.last_damage_time) < 0.25 then return false end
     if data.last_shot_time and (globals.curtime() - data.last_shot_time) < 0.2 then return false end
     if detection.confidence < 92 then
@@ -1005,13 +1223,13 @@ local function detect_exploit_doubletap(player, data)
     
     -- 1. TICKBASE ROLLBACK (Defensive AA / Defensive DT)
     -- If simulation time goes BACKWARD, they are 100% manipulating tickbase.
-    if diff < 0 then 
-        return create_detection_result(true, 100, "negative_simtime", math_min(math_abs(diff) + 2, 14), data.last_good_angle or 0) 
+    if diff < 0 then
+        return create_detection_result(true, 100, "negative_simtime", 8, data.last_good_angle or 0)
     end
     
     -- 2. INSTANT LAG COMP START (Massive Choke Spike)
-    if diff >= 14 then 
-        return create_detection_result(true, 98, "instant_lc", 14, data.last_good_angle or 0) 
+    if diff >= 14 then
+        return create_detection_result(true, 98, "instant_lc", 6, data.last_good_angle or 0)
     end
     
     -- 3. SOURCE ENGINE BREAK-LC (Teleport Detection)
@@ -1021,7 +1239,7 @@ local function detect_exploit_doubletap(player, data)
         if ox and oy and oz then
             local dist_sqr = (ox - data.last_position.x)^2 + (oy - data.last_position.y)^2 + (oz - data.last_position.z)^2
             if dist_sqr > 4096 then
-                return create_detection_result(true, 100, "break_lc_teleport", 8, data.last_good_angle or 0)
+                return create_detection_result(true, 100, "break_lc_teleport", 6, data.last_good_angle or 0)
             end
         end
     end
@@ -1032,8 +1250,8 @@ local function detect_exploit_doubletap(player, data)
         local p2 = math_floor((data.sim_history[3].sim_time - data.sim_history[3].old_sim_time) / globals.tickinterval() + 0.5)
         
         -- If they choked 12+ ticks, then immediately sent 1-2 ticks, they just rapid-fired.
-        if p1 >= 12 and diff <= 2 and p2 <= 2 then 
-            return create_detection_result(true, 93, "fakelag_break", 6, data.last_good_angle or 0) 
+        if p1 >= 12 and diff <= 2 and p2 <= 2 then
+            return create_detection_result(true, 93, "fakelag_break", 4, data.last_good_angle or 0)
         end
     end
     
@@ -1091,9 +1309,6 @@ local function detect_pitch_exploit(player, data)
     table.insert(data.pitch_history, 1, { pitch = pitch, yaw = yaw, tick = globals.tickcount() })
     if #data.pitch_history > 10 then table.remove(data.pitch_history) end
     if #data.pitch_history < 3 then return create_detection_result(false, 0, "none", 0) end
-    
-    if math.abs(pitch - 89) < 2 then return create_detection_result(true, 97, "fake_up", 5, data.last_good_angle or 0) end
-    if math.abs(pitch + 89) < 2 then return create_detection_result(true, 97, "fake_down", 5, data.last_good_angle or 0) end
     
     local chg, tot = 0, 0
     for i = 1, math.min(3, #data.pitch_history - 1) do
@@ -1194,14 +1409,25 @@ local function resolve_by_velocity_advanced(player, data)
     local anim = get_anim_state(get_entity_address(player))
     if not anim then return false, nil end
     local m_yaw, f_yaw = anim.flMoveYaw, anim.flGoalFeetYaw
+
+    if not valid_anim_value(m_yaw, -180, 180) then return false, nil end
+    if not valid_anim_value(f_yaw, -180, 180) then return false, nil end
+
     local delta = normalize_angle(math.deg(math.atan2(vy, vx)) - f_yaw)
     local str_type = "none"
     if math.abs(delta) > 45 and math.abs(delta) < 135 then str_type = speed > 220 and "fast_strafe" or (speed > 150 and "normal_strafe" or "slow_strafe") end
     
     if str_type == "fast_strafe" then
         local side = delta > 0 and -1 or 1
-        data.confidence = math.min(100, data.confidence + ((entity.get_prop(player, "m_fFlags") and bit.band(entity.get_prop(player, "m_fFlags"), 1) == 0 and 30 or 25) * (data.velocity_reliability or 0.5)))
-        return true, side * (bit.band(entity.get_prop(player, "m_fFlags"), 1) == 0 and 60 or 58)
+        local flags = entity.get_prop(player, "m_fFlags") or 0
+        local airborne = bit.band(flags, 1) == 0
+
+        data.confidence = math.min(
+            100,
+            data.confidence + ((airborne and 30 or 25) * (data.velocity_reliability or 0.5))
+        )
+
+        return true, side * (airborne and 60 or 58)
     end
     if str_type == "normal_strafe" then data.confidence = math.min(100, data.confidence + (20 * (data.velocity_reliability or 0.5))); return true, (delta > 0 and -1 or 1) * 55 end
     if str_type == "slow_strafe" then
@@ -1264,6 +1490,10 @@ local function analyze_lean_layer(player, data)
     if not ptr then return false, nil end
     local layers = get_anim_layers(ptr)
     if not layers then return false, nil end
+    
+    if not valid_anim_layer(layers[12]) then return false, nil end
+    if not valid_anim_layer(layers[6]) then return false, nil end
+
     if not data.lean_history then data.lean_history = {} end
     table.insert(data.lean_history, 1, { weight = layers[12].m_weight, cycle = layers[12].m_cycle, move_weight = layers[6].m_weight, tick = globals.tickcount() })
     if #data.lean_history > 6 then table.remove(data.lean_history) end
@@ -1272,7 +1502,7 @@ local function analyze_lean_layer(player, data)
     local diff = data.lean_history[1].weight - data.lean_history[2].weight
     if math.abs(diff) > 0.15 then data.confidence = math.min(100, data.confidence + 18); return true, (diff > 0 and 1 or -1) * 58 end
     if math.abs((data.lean_history[1].weight / (data.lean_history[1].move_weight + 0.001)) - (data.lean_history[2].weight / (data.lean_history[2].move_weight + 0.001))) > 3.0 then
-        data.suspicious_animation = true; data.is_defensive = true; data.defensive_ticks = 3
+        data.suspicious_animation = true
     end
     return false, nil
 end
@@ -1291,42 +1521,106 @@ end
 
 local function detect_animation_break_enhanced(player, data)
     local ptr = get_entity_address(player)
-    if not ptr then return false end
+    if not ptr then return create_detection_result(false, 0, "none", 0) end
+
     local layers = get_anim_layers(ptr)
-    if not layers then return false end
+    if not layers then return create_detection_result(false, 0, "none", 0) end
+
+    local move = layers[6]
+    local lean = layers[12]
+    local adjust = layers[3]
+
+    if not valid_anim_layer(move) then return create_detection_result(false, 0, "none", 0) end
+    if not valid_anim_layer(lean) then return create_detection_result(false, 0, "none", 0) end
+    if not valid_anim_layer(adjust) then return create_detection_result(false, 0, "none", 0) end
+
     if not data.layer_history then data.layer_history = {} end
-    table.insert(data.layer_history, 1, { move_weight = layers[6].m_weight, move_cycle = layers[6].m_cycle, lean_weight = layers[12].m_weight, adjust_cycle = layers[3].m_cycle, tick = globals.tickcount() })
+
+    table.insert(data.layer_history, 1, {
+        move_weight = move.m_weight,
+        move_cycle = move.m_cycle,
+        lean_weight = lean.m_weight,
+        adjust_cycle = adjust.m_cycle,
+        tick = globals.tickcount()
+    })
+
     if #data.layer_history > 8 then table.remove(data.layer_history) end
-    if #data.layer_history < 2 then return false end
-    
+    if #data.layer_history < 2 then return create_detection_result(false, 0, "none", 0) end
+
     local curr, prev = data.layer_history[1], data.layer_history[2]
-    if math.abs(curr.move_weight - prev.move_weight) > 0.5 and math.abs(curr.move_cycle - prev.move_cycle) < 0.01 then data.is_defensive = true; data.defensive_ticks = 5; return true end
-    if curr.move_cycle < prev.move_cycle - 0.5 then data.is_defensive = true; data.defensive_ticks = 4; return true end
-    if math.abs((curr.move_weight / (curr.move_cycle + 0.001)) - (curr.lean_weight / (curr.adjust_cycle + 0.001))) > 8.0 then data.is_defensive = true; data.defensive_ticks = 3; return true end
-    return false
+
+    if math.abs(curr.move_weight - prev.move_weight) > 0.5 and math.abs(curr.move_cycle - prev.move_cycle) < 0.01 then
+        return create_detection_result(true, 91, "layer_weight_break", 5, data.last_good_angle or 0)
+    end
+
+    if math.abs((curr.move_weight / (curr.move_cycle + 0.001)) - (curr.lean_weight / (curr.adjust_cycle + 0.001))) > 8.0 then
+        return create_detection_result(true, 86, "layer_ratio_break", 3, data.last_good_angle or 0)
+    end
+
+    return create_detection_result(false, 0, "none", 0)
 end
 
 local function detect_defensive_comprehensive(player, data)
+    local local_player = entity.get_local_player()
+    if not player or player == local_player or not entity.is_alive(player) then return false end
+
     local tick = globals.tickcount()
-    
-    -- If our own cheat is currently actively recharging or shifting, abort to prevent desyncing ourselves
-    if exploits:in_defensive() or exploits:in_recharge() then return false end
-    
+
     -- Retrieve cached network validation threshold
-    if defensive_check_cache[player] and (tick - (defensive_check_time[player] or 0)) < DEFENSIVE_CACHE_DURATION then 
-        return defensive_check_cache[player] 
+    if defensive_check_cache[player] and (tick - (defensive_check_time[player] or 0)) < DEFENSIVE_CACHE_DURATION then
+        return false
     end
     
-    -- Run ONLY the true Source Engine Tickbase/LC Break detector.
-    -- We completely removed the pitch, spin, and flick false-positive detectors.
-    local best = detect_exploit_doubletap(player, data)
+    local strategy = ui.defensive.strategy:get()
+    local signals, min_conf, require_confirmation
+    if strategy == "Aggressive" then
+        signals = {"Simulation", "Choke", "Eye Angles", "Pitch", "Spin", "Animation Layers"}
+        min_conf = 83
+    elseif strategy == "Stable" then
+        signals = {"Simulation", "Choke", "Animation Layers"}
+        min_conf = 95
+        require_confirmation = true
+    elseif strategy == "Custom" then
+        signals = ui.defensive.signals:get()
+        min_conf = ui.defensive.min_confidence:get()
+    else
+        signals = {"Simulation", "Choke", "Animation Layers"}
+        min_conf = 90
+    end
+
+    local results = {}
+    if contains(signals, "Simulation") then results[#results + 1] = detect_exploit_doubletap(player, data) end
+    if contains(signals, "Choke") then results[#results + 1] = detect_defensive_choke(player, data) end
+
+    local eye_result
+    if contains(signals, "Eye Angles") or contains(signals, "Spin") then
+        eye_result = detect_eye_angle_flick(player, data)
+        if contains(signals, "Eye Angles") then results[#results + 1] = eye_result end
+    end
+    if contains(signals, "Pitch") then results[#results + 1] = detect_pitch_exploit(player, data) end
+    if contains(signals, "Spin") then results[#results + 1] = detect_defensive_spin(player, data) end
+    if contains(signals, "Animation Layers") then results[#results + 1] = detect_animation_break_enhanced(player, data) end
+
+    local best = create_detection_result(false, 0, "none", 0)
+    local detected_count = 0
+    for i = 1, #results do
+        local result = results[i]
+        if result.detected then
+            detected_count = detected_count + 1
+            if result.confidence > best.confidence then best = result end
+        end
+    end
     
     -- Do not override physical damage/shot registry windows unless confidence is absolute
     if data.last_shot_time and (globals.curtime() - data.last_shot_time) < 0.15 and best.confidence < 95 then return false end
     if data.last_damage_time and (globals.curtime() - data.last_damage_time) < 0.25 and best.confidence < 95 then return false end
     
-    if best and best.detected and best.confidence >= 95 then
+    local confirmed = not require_confirmation or detected_count >= 2 or best.confidence >= 98
+    if best.detected and best.confidence >= min_conf and confirmed then
         data.is_defensive = true
+        data.defensive_confirmed = detected_count >= 2
+            or best.method == "negative_simtime"
+            or best.method == "break_lc_teleport"
         
         -- THREAT DECAY SYSTEM: Actively stack delay ticks for real teleports
         data.defensive_ticks = math_max(data.defensive_ticks or 0, best.ticks)
@@ -1345,8 +1639,36 @@ local function detect_defensive_comprehensive(player, data)
         return true
     end
     
-    defensive_check_cache[player] = false
+    defensive_check_cache[player] = nil
+    defensive_check_time[player] = nil
+    data.defensive_confirmed = false
     return false
+end
+
+local function get_defensive_angle(player, data)
+    if not data then return nil end
+
+    -- Best option: reuse last known angle that worked
+    if data.last_good_angle and data.last_good_angle ~= 0 then
+        return data.last_good_angle
+    end
+
+    -- Second option: reuse last resolved side
+    if data.last_resolved_side and data.last_resolved_side ~= 0 then
+        return data.last_resolved_side * 58
+    end
+
+    -- Third option: use current body yaw pose if available
+    local pose = entity.get_prop(player, "m_flPoseParameter", 11)
+    if pose then
+        local body_yaw = pose * 120 - 60
+        if math.abs(body_yaw) > 8 then
+            return body_yaw > 0 and -58 or 58
+        end
+    end
+
+    -- Last fallback
+    return 0
 end
 
 local function detect_airborne_state(player, data)
@@ -1429,7 +1751,7 @@ local function resolve_crouching(player, data)
     if not data.crouch_state or not data.crouch_state.is_crouching then return false, nil end
     local by = entity.get_prop(player, "m_flPoseParameter", 11)
     if not by then return false, nil end; by = by * 120 - 60
-    if data.crouch_state.crouch_type == "fakeduck" then data.confidence = 95; data.is_defensive = true; data.defensive_ticks = 3; return true, 0 end
+    if data.crouch_state.crouch_type == "fakeduck" then data.confidence = 95; return true, 0 end
     if data.crouch_state.crouch_type == "full" then data.confidence = 85; return true, by > 0 and -45 or 45 end
     data.confidence = 80; return true, by > 0 and -58 or 58
 end
@@ -1456,10 +1778,16 @@ end
 -- BRUTEFORCE MATRIX RESOLVER MODULES
 -- ============================================================================
 local function intelligent_bruteforce(player, data)
-    local best, b_rate = "sequential", 0
+    local best, b_rate = "Sequential", 0
     for m, p in pairs(data.brute_patterns) do if p.success_rate > b_rate then b_rate = p.success_rate; best = m end end
     local base = ui.resolver.brute_phases:get()
-    return best, data.hit_rate < 0.2 and math.min(7, base + 2) or (data.hit_rate > 0.6 and math.max(2, base - 1) or base)
+    local mode_names = {
+        sequential = "Sequential",
+        random = "Random",
+        smart = "Smart",
+        adaptive = "Adaptive"
+    }
+    return mode_names[best] or best, data.hit_rate < 0.2 and math.min(7, base + 2) or (data.hit_rate > 0.6 and math.max(2, base - 1) or base)
 end
 
 local function analyze_layer_correlations(player, data)
@@ -1476,28 +1804,62 @@ local function analyze_layer_correlations(player, data)
     return corr
 end
 
-local function update_resolver_analytics(player, data, hit_success, method_used)
+local function save_learning_profile(player, data)
+    local state = get_learning_state(player, data.learning_state or "standing")
+    if not state then return end
+    state.method_weights = data.method_weights
+    state.analytics = data.analytics
+    state.brute_aggression = data.brute_aggression
+end
+
+local function update_resolver_analytics(player, data, hit_success, method_used, sample_weight)
     if not data.analytics then data.analytics = { method_success = {}, angle_success = {}, timing_success = {}, total_resolves = 0, successful_resolves = 0, overall_success_rate = 0 } end
-    data.analytics.total_resolves = data.analytics.total_resolves + 1
+    sample_weight = sample_weight or 1
+    data.analytics.total_resolves = data.analytics.total_resolves + sample_weight
     if hit_success then
-        data.analytics.successful_resolves = data.analytics.successful_resolves + 1
-        data.analytics.method_success[method_used] = (data.analytics.method_success[method_used] or 0) + 1
+        data.analytics.successful_resolves = data.analytics.successful_resolves + sample_weight
+        data.analytics.method_success[method_used] = (data.analytics.method_success[method_used] or 0) + sample_weight
         data.last_successful_method = method_used
     else data.last_failed_method = method_used end
     data.analytics.overall_success_rate = data.analytics.successful_resolves / math.max(1, data.analytics.total_resolves)
 end
 
+local function record_state_learning_result(player, data, shot, hit_success, sample_weight)
+    local state = get_learning_state(player, shot.learning_state or "standing")
+    if not state then return end
+    sample_weight = sample_weight or 1
+    local angle_key = tostring(math.floor((shot.resolved_angle or 0) + 0.5))
+    if not state.angle_results[angle_key] then state.angle_results[angle_key] = { hits = 0, misses = 0 } end
+    local result = state.angle_results[angle_key]
+    if hit_success then result.hits = result.hits + sample_weight else result.misses = result.misses + sample_weight end
+    if shot.roll_suspected then
+        if hit_success then state.roll_hits = state.roll_hits + sample_weight else state.roll_misses = state.roll_misses + sample_weight end
+    end
+    local method = shot.resolve_method or "unknown"
+    state.analytics.total_resolves = state.analytics.total_resolves + sample_weight
+    if hit_success then
+        state.analytics.successful_resolves = state.analytics.successful_resolves + sample_weight
+        state.analytics.method_success[method] = (state.analytics.method_success[method] or 0) + sample_weight
+    end
+    state.analytics.overall_success_rate = state.analytics.successful_resolves / math.max(1, state.analytics.total_resolves)
+end
+
 local function adaptive_learning(player, data)
-    if data.analytics.total_resolves < 5 then return end
+    local evidence_scale = math.min(1, data.analytics.total_resolves / 4)
+    local learning_scale = (ui.resolver.ai_learning:get() / 100) * evidence_scale
+    if learning_scale <= 0 then return end
     local rate = data.analytics.overall_success_rate
     if rate < 0.3 then
-        data.learning_phase = "experimental"; data.brute_aggression = math.min(1.0, data.brute_aggression + 0.2)
-        data.method_weights = { lby_delta = 0.25, movement = 0.20, animation = 0.15, velocity = 0.15, historical = 0.15, pattern = 0.10 }
-    elseif rate < 0.5 then data.learning_phase = "experimental"; data.brute_aggression = math.min(1.0, data.brute_aggression + 0.15)
+        data.learning_phase = "experimental"; data.brute_aggression = math.min(1.0, data.brute_aggression + 0.2 * learning_scale)
+        local defaults = { lby_delta = 0.25, movement = 0.20, animation = 0.15, velocity = 0.15, historical = 0.15, pattern = 0.10 }
+        for method, default_weight in pairs(defaults) do
+            data.method_weights[method] = data.method_weights[method] + (default_weight - data.method_weights[method]) * 0.1 * learning_scale
+        end
+    elseif rate < 0.5 then data.learning_phase = "experimental"; data.brute_aggression = math.min(1.0, data.brute_aggression + 0.15 * learning_scale)
     elseif rate > 0.75 then
-        data.learning_phase = "refinement"; data.brute_aggression = math.max(0.3, data.brute_aggression - 0.08)
+        data.learning_phase = "refinement"; data.brute_aggression = math.max(0.3, data.brute_aggression - 0.08 * learning_scale)
         if data.last_successful_method and data.method_weights[data.last_successful_method] then
-            data.method_weights[data.last_successful_method] = math.min(0.4, data.method_weights[data.last_successful_method] * 1.2)
+            data.method_weights[data.last_successful_method] = math.min(0.4, data.method_weights[data.last_successful_method] * (1 + 0.2 * learning_scale))
             local total = 0
             for _, w in pairs(data.method_weights) do total = total + w end
             for m, w in pairs(data.method_weights) do data.method_weights[m] = w / total end
@@ -1511,20 +1873,21 @@ local function adaptive_learning(player, data)
     if data.patterns.consistent_side ~= 0 then data.player_profile.desync_habits.consistent_side = data.patterns.consistent_side end
     
     if data.player_profile.playstyle == "aggressive" then
-        data.method_weights.velocity = math.min(0.3, data.method_weights.velocity * 1.2); data.method_weights.pattern = math.min(0.2, data.method_weights.pattern * 1.3)
+        data.method_weights.velocity = math.min(0.3, data.method_weights.velocity * (1 + 0.2 * learning_scale)); data.method_weights.pattern = math.min(0.2, data.method_weights.pattern * (1 + 0.3 * learning_scale))
     elseif data.player_profile.playstyle == "passive" then
-        data.method_weights.lby_delta = math.min(0.35, data.method_weights.lby_delta * 1.2); data.method_weights.historical = math.min(0.2, data.method_weights.historical * 1.1)
+        data.method_weights.lby_delta = math.min(0.35, data.method_weights.lby_delta * (1 + 0.2 * learning_scale)); data.method_weights.historical = math.min(0.2, data.method_weights.historical * (1 + 0.1 * learning_scale))
     end
     local total = 0
     for _, w in pairs(data.method_weights) do total = total + w end
     for m, w in pairs(data.method_weights) do data.method_weights[m] = w / total end
+    save_learning_profile(player, data)
 end
 
 local function apply_defensive_shot_delay(player, data)
     if not ui.defensive.delay_head:get() then data.block_shots = false; return false end
     local delay = (data.is_defensive and data.defensive_ticks > 0) or (data.defensive_wait_until and globals.tickcount() < data.defensive_wait_until)
-    if delay then plist.set(player, "Override safe point", "On"); data.block_shots = true; return true
-    else data.block_shots = false; plist.set(player, "Override safe point", "-"); return false end
+    if delay then safe_plist_set(player, "Override safe point", "On"); data.block_shots = true; return true
+    else data.block_shots = false; safe_plist_set(player, "Override safe point", "-"); return false end
 end
 
 -- ============================================================================
@@ -1541,82 +1904,122 @@ local function apply_smart_baim_preset()
 end
 
 local function apply_smart_hitbox_override(player, data)
-    if not ui.rage.smart_baim:get() then
-        plist.set(player, "Override prefer body aim", "-"); plist.set(player, "Override safe point", "-")
-        data.baim_reason = nil; data.lethal_mindmg_required = nil; return
+    local rage = ui.rage
+    local smart_enabled = rage.smart_baim:get()
+    local lethal_enabled = rage.lethal_enable:get()
+
+    if not smart_enabled and not lethal_enabled then
+        safe_plist_set(player, "Override prefer body aim", "-")
+        safe_plist_set(player, "Override safe point", "-")
+        data.baim_reason = nil
+        data.lethal_mindmg_required = nil
+        return
     end
-    
-    local speed = get_player_speed_cached(player)
+
     local local_player = entity.get_local_player()
     if not local_player then return end
-    
-    local my_w_type = get_weapon_type(entity.get_player_weapon(local_player))
+
     local hp = get_cached_prop(player, "m_iHealth", 100)
-    local is_lethal = hp <= ui.rage.lethal_threshold:get()
-    
+    local is_lethal = hp <= rage.lethal_threshold:get()
+
     data.body_aimable = is_lethal
     data.lethal_shot_available = is_lethal
-    
-    -- If they aren't lethal, reset overrides and aim normally
-    if not is_lethal then 
-        plist.set(player, "Override prefer body aim", "-"); plist.set(player, "Override safe point", "-"); 
-        data.baim_reason = "HEAD"; data.lethal_mindmg_required = nil; return 
+
+    if not is_lethal then
+        safe_plist_set(player, "Override prefer body aim", "-")
+        safe_plist_set(player, "Override safe point", "-")
+        data.baim_reason = "HEAD"
+        data.lethal_mindmg_required = nil
+        return
     end
-    
-    local l_mode, baim, safe, reason = ui.rage.lethal_mode:get(), false, false, nil
+
+    local speed = get_player_speed_cached(player)
     local acc = calculate_shot_accuracy(player)
-    
-    -- ==========================================
-    -- VISIBILITY CHECK: Is the body actually hittable?
-    -- ==========================================
     local est_body_damage = calculate_body_damage(player, local_player)
-    
-    if est_body_damage < hp and est_body_damage < 5 then
+    local l_mode = rage.lethal_mode:get()
+
+    local baim = false
+    local baim_override = "-"
+    local safe = false
+    local reason = nil
+
+    if est_body_damage < hp then
+        data.body_aimable = false
+        data.lethal_shot_available = false
+        data.lethal_mindmg_required = nil
         baim = false
-        reason = "LETHAL_BODY_OCCLUDED" 
+        baim_override = "-"
+        reason = "LETHAL_BODY_OCCLUDED"
     else
-        if l_mode == "Force body (strict)" then 
-            baim = true; reason = "LETHAL_STRICT"
-        elseif l_mode == "Prefer body (flexible)" then 
-            if data.confidence >= 90 and speed < 5 and acc >= ui.rage.accuracy_threshold:get() then 
-                baim = false; reason = "LETHAL_HEAD_OVERRIDE" 
-            else 
-                baim = true; reason = "LETHAL_PREFER" 
+        if l_mode == "Force body (strict)" then
+            baim = true
+            baim_override = "Force"
+            reason = "LETHAL_STRICT"
+
+        elseif l_mode == "Prefer body (flexible)" then
+            baim = true
+            baim_override = "On"
+            reason = "LETHAL_PREFER"
+
+        elseif l_mode == "Smart (adjust by accuracy)" then
+            if acc < rage.accuracy_threshold:get() or data.confidence < 75 then
+                baim = true
+                baim_override = "Force"
+                reason = "LETHAL_SMART_FORCE"
+            else
+                baim = true
+                baim_override = "On"
+                reason = "LETHAL_SMART_PREFER"
             end
-        elseif l_mode == "Smart (adjust by accuracy)" then 
-            if acc < ui.rage.accuracy_threshold:get() then 
-                baim = true; reason = "LETHAL_SMART_LOW_ACC" 
-            elseif data.confidence < 75 then 
-                baim = true; reason = "LETHAL_SMART_LOW_CONF" 
-            else 
-                baim = false; reason = "LETHAL_SMART_HIGH_ACC" 
-            end 
         end
     end
-    
-    if data.misses >= 2 or (acc < 70 and is_lethal) then 
-        safe = true; reason = (reason or "LETHAL") .. "_SAFEPOINT" 
+
+    if data.misses >= 2 or (acc < 70 and is_lethal) then
+        safe = true
+        reason = (reason or "LETHAL") .. "_SAFEPOINT"
     end
-    
-    -- Apply the hitbox safety overrides to the aimbot
-    plist.set(player, "Override prefer body aim", baim and "Force" or "-")
-    plist.set(player, "Override safe point", safe and "On" or "-")
-    
-    -- ==========================================
-    -- SCOUT-ONLY MIN DAMAGE OVERRIDE
-    -- ==========================================
-    if is_lethal and baim and ui.rage.lethal_override_mindmg:get() and my_w_type == "scout" then 
-        data.lethal_mindmg_required = math.min(hp + (entity.get_prop(player, "m_ArmorValue") > 0 and 5 or 0), 100) 
-    else 
-        data.lethal_mindmg_required = nil 
+
+    safe_plist_set(player, "Override prefer body aim", baim_override)
+    safe_plist_set(player, "Override safe point", safe and "On" or "-")
+
+    if is_lethal and baim and rage.lethal_override_mindmg:get() then
+        local my_w_type = get_weapon_type(entity.get_player_weapon(local_player))
+        if my_w_type == "scout" then
+            local armor = entity.get_prop(player, "m_ArmorValue") or 0
+            data.lethal_mindmg_required = math.min(hp + (armor > 0 and 5 or 0), 100)
+        else
+            data.lethal_mindmg_required = nil
+        end
+    else
+        data.lethal_mindmg_required = nil
     end
-    
+
     data.baim_reason = reason
+    data.estimated_body_damage = est_body_damage
+    data.last_known_health = hp
 end
 
 -- ============================================================================
 -- PRIMARY RESOLVER LOGIC MULTI METHOD SUBROUTINES
 -- ============================================================================
+local function get_learned_state_angle(player, data)
+    local state = get_learning_state(player, data.learning_state or "standing")
+    if not state then return nil, 0 end
+    local best_angle, best_score, best_samples = nil, 0, 0
+    for angle, result in pairs(state.angle_results) do
+        local samples = result.hits + result.misses
+        if samples > 0 then
+            local rate = result.hits / samples
+            local score = rate * math.min(samples, 4)
+            if result.hits >= 1 and rate >= 0.55 and score > best_score then
+                best_angle, best_score, best_samples = tonumber(angle), score, samples
+            end
+        end
+    end
+    if not best_angle then return nil, 0 end
+    return best_angle, math.min(0.7, best_samples / 5)
+end
+
 local function ai_resolve(player, data)
     -- Start with a baseline confidence instead of 0
     local conf = 30
@@ -1631,6 +2034,7 @@ local function ai_resolve(player, data)
     update_weapon_priority(player, data)
     
     local w = data.method_weights
+    local dominant_signal, dominant_weight = "lby_delta", 0
     local lby = entity.get_prop(player, "m_flLowerBodyYawTarget") or 0
     local by = get_dynamic_body_yaw(player) -- Dynamically mapped via C++ engine structures
     local speed = get_player_speed_cached(player)
@@ -1643,6 +2047,7 @@ local function ai_resolve(player, data)
     -- 1. LBY Analysis Vote
     local d_lby = angle_diff(lby, data.last_lby)
     if math_abs(d_lby) > 35 then 
+        dominant_signal, dominant_weight = "lby_delta", w.lby_delta
         if d_lby > 0 then vote_right = vote_right + w.lby_delta
         else vote_left = vote_left + w.lby_delta end
         conf = conf + 25 * w.lby_delta 
@@ -1652,6 +2057,7 @@ local function ai_resolve(player, data)
     if speed > 5 then
         local anim = get_anim_state(get_entity_address(player))
         if anim then 
+            if w.movement > dominant_weight then dominant_signal, dominant_weight = "movement", w.movement end
             local my = anim.flMoveYaw
             if my >= -180 and my < 0 then vote_right = vote_right + w.movement
             else vote_left = vote_left + w.movement end
@@ -1665,6 +2071,7 @@ local function ai_resolve(player, data)
     
     -- 3. Pattern Recognition Vote
     if data.patterns.consistent_side ~= 0 then 
+        if w.pattern > dominant_weight then dominant_signal, dominant_weight = "pattern", w.pattern end
         if data.patterns.consistent_side > 0 then vote_left = vote_left + w.pattern
         else vote_right = vote_right + w.pattern end
         conf = conf + 15 * w.pattern 
@@ -1719,6 +2126,11 @@ local function ai_resolve(player, data)
     -- PHASE 3: FINAL CALCULATION
     -- ==========================================
     local res = final_side * magnitude
+    local learned_angle, learned_influence = get_learned_state_angle(player, data)
+    if learned_angle and learned_influence > 0 then
+        res = res * (1 - learned_influence) + learned_angle * learned_influence
+        conf = conf + 20 * learned_influence
+    end
     
     -- Failsafe
     if math_abs(res) < 5 then res = lby > 0 and -58 or 58 end
@@ -1733,27 +2145,62 @@ local function ai_resolve(player, data)
     
     data.confidence = clamp(conf, 0, 100)
     data.resolved_angle = clamp(res, -60, 60)
+    data.last_ai_signal = dominant_signal
     
     return data.resolved_angle
 end
 
 local function analyze_animation_layers(player, data)
-    local layers = get_anim_layers(get_entity_address(player))
+    local ptr = get_entity_address(player)
+    if not ptr then return false end
+
+    local layers = get_anim_layers(ptr)
     if not layers then return false end
-    data.layer_data.move_weight = layers[6].m_weight; data.layer_data.move_cycle = layers[6].m_cycle; data.layer_data.move_playback = layers[6].m_playback_rate
-    data.layer_data.stand_cycle = layers[3].m_cycle; data.layer_data.stand_weight = layers[3].m_weight
+
+    local move = layers[6]
+    local stand = layers[3]
+
+    if not valid_anim_layer(move) then return false end
+    if not valid_anim_layer(stand) then return false end
+
+    data.layer_data.move_weight = move.m_weight
+    data.layer_data.move_cycle = move.m_cycle
+    data.layer_data.move_playback = move.m_playback_rate
+    data.layer_data.stand_cycle = stand.m_cycle
+    data.layer_data.stand_weight = stand.m_weight
+
     return true
 end
 
 local function get_move_direction_side(player, data)
     local vx, vy = get_cached_prop(player, "m_vecVelocity", 0)
-    if not vx or not vy or math.sqrt(vx*vx + vy*vy) < 1 then return 0 end
+    if not vx or not vy or math.sqrt(vx * vx + vy * vy) < 1 then
+        return 0
+    end
+
     local anim = get_anim_state(get_entity_address(player))
     if not anim then return 0 end
+
     local my = anim.flMoveYaw
-    if my > 5 and my <= 180 then return -1 elseif my >= -180 and my < -5 then return 1
-    elseif my > 175 or my < -175 then return -1
-    elseif math.abs(my) < 5 then return (entity.get_prop(player, "m_flPoseParameter", 11) * 120 - 60) > 0 and -1 or 1 end
+    if not valid_anim_value(my, -180, 180) then
+        return 0
+    end
+
+    -- Backwards / near 180 movement special case
+    if my > 175 or my < -175 then
+        return -1
+    elseif my > 5 then
+        return -1
+    elseif my < -5 then
+        return 1
+    elseif math.abs(my) < 5 then
+        local pose = entity.get_prop(player, "m_flPoseParameter", 11)
+        if not pose then return 0 end
+
+        local body_yaw = pose * 120 - 60
+        return body_yaw > 0 and -1 or 1
+    end
+
     return 0
 end
 
@@ -1820,83 +2267,137 @@ local function resolve_peek_adaptive(player, data, peek_type, peek_confidence)
     elseif peek_type == "stop" then data.confidence = 92; return true, lby > 0 and -60 or 60
     elseif peek_type == "wide" then
         local anim = get_anim_state(get_entity_address(player))
-        if anim and math.abs(anim.flMoveYaw) < 30 then data.confidence = 78; return true, by and (by > 0 and -40 or 40) or 0 end
-        data.confidence = 75; return true, anim and (anim.flMoveYaw > 0 and 50 or -50) or 0
+        local my = nil
+
+        if anim and valid_anim_value(anim.flMoveYaw, -180, 180) then
+            my = anim.flMoveYaw
+        end
+
+        if my and math.abs(my) < 30 then
+            data.confidence = 78
+            return true, by and (by > 0 and -40 or 40) or 0
+        end
+
+        data.confidence = 75
+        return true, my and (my > 0 and 50 or -50) or 0
     end
     return false, nil
 end
 
 local function smart_resolve(player, data)
-    local dec = ui.resolver.detection:get()
     local conf, side, offset = 40, 0, 0
     local vx, vy = get_cached_prop(player, "m_vecVelocity", 0)
-    local speed = (vx and vy) and math.sqrt(vx*vx + vy*vy) or 0
+    local speed = (vx and vy) and math_sqrt(vx*vx + vy*vy) or 0
     local lby = entity.get_prop(player, "m_flLowerBodyYawTarget") or 0
     
     local p_type, p_conf = detect_peek_state(player, data)
     local p_res, p_ang = resolve_peek_adaptive(player, data, p_type, p_conf)
     if p_res and p_ang then data.last_peek_type = p_type; data.resolved_angle = p_ang; return p_ang end
+    
     if speed > 220 and entity.get_prop(player, "m_angEyeAngles[1]") then
         local sd = normalize_angle(math.deg(math.atan2(vy, vx)) - entity.get_prop(player, "m_angEyeAngles[1]"))
-        if math.abs(sd) > 60 and math.abs(sd) < 120 then data.confidence = 92; data.resolved_angle = sd > 0 and -58 or 58; return data.resolved_angle end
+        if math_abs(sd) > 60 and math_abs(sd) < 120 then data.confidence = 92; data.resolved_angle = sd > 0 and -58 or 58; return data.resolved_angle end
     end
     
-    if detect_defensive_comprehensive(player, data) and is_valid_defensive_detection(player, data, { detected = true, confidence = data.defensive_suspicion_score or 0 }) and data.defensive_ticks > 2 then
+    if data.is_defensive and is_valid_defensive_detection(player, data, { detected = true, confidence = data.defensive_suspicion_score or 0 }) and data.defensive_ticks > 2 then
         local d_ang = resolve_defensive(player, data)
         if d_ang then data.resolved_angle = d_ang; return d_ang end
     end
+    
     detect_airborne_state(player, data)
     local air_res, air_ang = resolve_airborne(player, data)
     if air_res and air_ang then return air_ang end
+    
     detect_crouch_state(player, data)
     local cr_res, cr_ang = resolve_crouching(player, data)
     if cr_res and cr_ang then return cr_ang end
     
-    if contains(dec, "Pattern Recognition") then analyze_desync_patterns(player, data) end
-    adaptive_confidence_system(player, data); predict_movement_trajectory(player, data)
-    if contains(dec, "Desync Break Detection") then detect_desync_break(player, data) end
-    analyze_layer_correlations(player, data)
-    if data.fake_desync_detected then lby = data.true_lby end
-    if contains(dec, "Peek Prediction") then predict_peek_behavior(player, data) end
-    if contains(dec, "Weapon Awareness") then update_weapon_priority(player, data) end
+    -- SPEED GATE: Heavy analytical math only runs if they are standing or slow walking
+    if speed < 5 then
+        analyze_desync_patterns(player, data)
+        analyze_layer_correlations(player, data)
+    end
     
-    if contains(dec, "LBY Analysis") and math.abs(angle_diff(lby, data.last_lby)) > 35 then side = angle_diff(lby, data.last_lby) > 0 and -1 or 1; conf = conf + 25 end
-    if contains(dec, "Movement Tracking") then
-        if speed > 2.0 then local ms = get_move_direction_side(player, data); if ms ~= 0 then side = ms; conf = conf + 20; data.moving_ticks = data.moving_ticks + 1; data.standing_ticks = 0 end else data.standing_ticks = data.standing_ticks + 1; data.moving_ticks = 0 end
+    adaptive_confidence_system(player, data)
+    predict_movement_trajectory(player, data)
+    detect_desync_break(player, data)
+    
+    if data.fake_desync_detected then lby = data.true_lby end
+    
+    predict_peek_behavior(player, data)
+    update_weapon_priority(player, data)
+    
+    -- Hardcoded Priority Resolution Hierarchy
+    if math_abs(angle_diff(lby, data.last_lby)) > 35 then 
+        side = angle_diff(lby, data.last_lby) > 0 and -1 or 1; conf = conf + 25 
     end
-    if contains(dec, "Standing Detection") and data.standing_ticks > 32 then side = lby > 0 and -1 or 1; conf = conf + 30 end
-    if contains(dec, "Animation Analysis") and analyze_animation_layers(player, data) then conf = conf + 15 end
-    if contains(dec, "Pattern Recognition") and data.patterns.consistent_side ~= 0 then side = data.patterns.consistent_side; conf = conf + 20 end
-    if contains(dec, "Pose Parameters") then local b_pred, b_ang = predict_body_yaw_update(player, data); if b_pred and b_ang then side = b_ang > 0 and 1 or -1; conf = conf + 20; offset = b_ang end end
-    if contains(dec, "Velocity Prediction") then local v_res, v_ang = resolve_by_velocity_advanced(player, data); if v_res and v_ang then side = v_ang > 0 and 1 or -1; conf = conf + 25; offset = v_ang end end
-    if contains(dec, "Standing Detection") then
-        local s_res, s_ang = resolve_standing_improved(player, data, lby)
-        if s_res and s_ang then
-            if data.standing_locked_angle and data.standing_lock_until and globals.tickcount() <= data.standing_lock_until then data.confidence = math.min(100, conf + 50); data.resolved_angle = s_ang; return s_ang end
-            side = s_ang > 0 and 1 or -1; conf = conf + 35; offset = s_ang
+    
+    if speed > 2.0 then 
+        local ms = get_move_direction_side(player, data)
+        if ms ~= 0 then side = ms; conf = conf + 20; data.moving_ticks = data.moving_ticks + 1; data.standing_ticks = 0 end 
+    else 
+        data.standing_ticks = data.standing_ticks + 1; data.moving_ticks = 0 
+    end
+    
+    if data.standing_ticks > 32 then side = lby > 0 and -1 or 1; conf = conf + 30 end
+    
+    if analyze_animation_layers(player, data) then conf = conf + 15 end
+    
+    if data.patterns.consistent_side ~= 0 then side = data.patterns.consistent_side; conf = conf + 20 end
+    
+    local b_pred, b_ang = predict_body_yaw_update(player, data)
+    if b_pred and b_ang then side = b_ang > 0 and 1 or -1; conf = conf + 20; offset = b_ang end
+    
+    local v_res, v_ang = resolve_by_velocity_advanced(player, data)
+    if v_res and v_ang then side = v_ang > 0 and 1 or -1; conf = conf + 25; offset = v_ang end 
+    
+    local s_res, s_ang = resolve_standing_improved(player, data, lby)
+    if s_res and s_ang then
+        if data.standing_locked_angle and data.standing_lock_until and globals.tickcount() <= data.standing_lock_until then 
+            data.confidence = math_min(100, conf + 50); data.resolved_angle = s_ang; return s_ang 
         end
+        side = s_ang > 0 and 1 or -1; conf = conf + 35; offset = s_ang
     end
-    if contains(dec, "Layer Weight") then local ln_res, ln_ang = analyze_lean_layer(player, data); if ln_res and ln_ang then side = ln_ang > 0 and 1 or -1; conf = conf + 18; offset = ln_ang end end
-    if contains(dec, "Micro Movement") and speed < 3 and speed > 0.1 then
-        local ptr = get_entity_address(player); local ly = ptr and get_anim_layers(ptr) or nil
-        if ly and ly[6].m_playback_rate * 100000 > 5.9 then side = 1 else side = -1 end; conf = conf + 20
+    
+    local ln_res, ln_ang = analyze_lean_layer(player, data)
+    if ln_res and ln_ang then side = ln_ang > 0 and 1 or -1; conf = conf + 18; offset = ln_ang end 
+    
+    if speed < 3 and speed > 0.1 then
+        local ptr = get_entity_address(player)
+        local ly = ptr and get_anim_layers(ptr) or nil
+
+        if ly and valid_anim_layer(ly[6]) and ly[6].m_playback_rate * 100000 > 5.9 then
+            side = 1
+        else
+            side = -1
+        end
     end
     
     if data.last_update then
         local dt = globals.curtime() - data.last_update
         if dt > 0.3 then conf = conf * math.exp(-(data.hit_rate > 0.7 and 0.08 or (data.hit_rate < 0.3 and 0.25 or 0.15)) * dt) end
     end
-    data.last_update = globals.curtime(); data.desync_side = side; data.confidence = math.min(100, conf); data.last_lby = lby
+    
+    data.last_update = globals.curtime(); data.desync_side = side; data.confidence = math_min(100, conf); data.last_lby = lby
     
     if data.recent_angles and #data.recent_angles >= 3 then
-        local cs = true; for i=1,3 do if data.recent_angles[i] and math.abs(data.recent_angles[i] - offset) > 25 then cs = false; break end end
-        if cs then data.confidence = math.min(100, data.confidence + 15) end
+        local cs = true; for i=1,3 do if data.recent_angles[i] and math_abs(data.recent_angles[i] - offset) > 25 then cs = false; break end end
+        if cs then data.confidence = math_min(100, data.confidence + 15) end
     end
-    if data.last_predicted_side == side then data.confidence = math.min(100, data.confidence + 5) end; data.last_predicted_side = side
-    offset = side * (ui.resolver.desync_strength:get() * 0.6)
-    if math.abs(offset) < 5 then offset = lby > 0 and -58 or 58; data.confidence = 50 end
+    
+    if data.last_predicted_side == side then data.confidence = math_min(100, data.confidence + 5) end
+    data.last_predicted_side = side
+    
+    local max_desync = ui.get_effective_desync_limit(player, speed)
+    if math_abs(offset) >= 5 then
+        offset = clamp(offset, -max_desync, max_desync)
+    else
+        offset = (side ~= 0 and side or (lby > 0 and -1 or 1)) * max_desync
+        data.confidence = 50
+    end
     if not data.is_defensive and data.confidence > 60 and data.resolved_angle and data.resolved_angle ~= 0 then data.last_good_angle = data.resolved_angle; data.last_good_angle_tick = globals.tickcount() end
     if data.last_successful_angle and data.last_successful_time and (globals.curtime() - data.last_successful_time) < 2.0 and conf < 50 then data.confidence = 65; return data.last_successful_angle end
+    
     return offset
 end
 
@@ -1904,6 +2405,7 @@ local function bruteforce_resolve(player, data)
     local mode, max_ph = ui.resolver.brute_mode:get(), ui.resolver.brute_phases:get()
     if data.brute_working and data.brute_locked then return data.resolved_angle end
     if mode == "Intelligent" then mode, max_ph = intelligent_bruteforce(player, data) end
+    data.last_brute_mode = string.lower(mode)
     local offset = 0
     if mode == "Sequential" then offset = -60 + (data.brute_phase - 1) * (120 / max_ph)
     elseif mode == "Random" then offset = math.random(-60, 60)
@@ -2029,14 +2531,29 @@ local function predict_lby_update(player, data)
 end
 
 local function track_pose_delta_speed(player, data)
-    local cp = entity.get_prop(player, "m_flPoseParameter", 11) * 120 - 60
+    local pose = entity.get_prop(player, "m_flPoseParameter", 11)
+    if not pose then return false, nil end
+
+    local cp = pose * 120 - 60
     data.pose_history:push({ value = cp, time = globals.curtime() })
+
     local hist = data.pose_history:get_all()
     if #hist >= 3 then
-        local d1, d2 = math.abs(hist[1].value - hist[2].value), math.abs(hist[2].value - hist[3].value)
-        if d1 > 80 and d2 > 80 then data.jitter_detected = true; data.jitter_side_preference = hist[1].value > 0 and 1 or -1; return true, (data.jitter_side_preference * 58) end
-        if (math.abs(hist[1].value - hist[3].value) / (hist[1].time - hist[3].time)) < 60 then data.confidence = math.min(100, data.confidence + 10) end
+        local d1 = math.abs(hist[1].value - hist[2].value)
+        local d2 = math.abs(hist[2].value - hist[3].value)
+
+        if d1 > 80 and d2 > 80 then
+            data.jitter_detected = true
+            data.jitter_side_preference = hist[1].value > 0 and 1 or -1
+            return true, data.jitter_side_preference * 58
+        end
+
+        local dt = hist[1].time - hist[3].time
+        if dt > 0 and (math.abs(hist[1].value - hist[3].value) / dt) < 60 then
+            data.confidence = math.min(100, data.confidence + 10)
+        end
     end
+
     return false, nil
 end
 
@@ -2172,11 +2689,13 @@ local function optimize_fakelag(cmd)
         return
     end
 
+    -- Fake duck needs a full choke cycle even while Double Tap is enabled.
     if f_duck_ref and f_duck_ref:get() then
         fakelag_ref:override(15)
         return
     end
 
+    -- Keep exploit recharge as unchoked as possible when not fake ducking.
     if exploits:in_recharge() then
         fakelag_ref:override(1)
         return
@@ -2187,6 +2706,7 @@ local function optimize_fakelag(cmd)
         return
     end
 
+    -- Telemetry & acceleration math
     local lat = (client.latency() or 0) * 1000
     local vx, vy = entity.get_prop(me, "m_vecVelocity")
     local speed = (vx and vy) and math.sqrt(vx * vx + vy * vy) or 0
@@ -2195,6 +2715,7 @@ local function optimize_fakelag(cmd)
     local acceleration = speed - prev_speed
     local_velocity_history[me] = speed
 
+    -- Advance variation once every three packet cycles, not every command.
     local tick = globals.tickcount()
     if cmd and cmd.chokedcommands == 0 and fakelag_last_send_tick ~= tick then
         fakelag_last_send_tick = tick
@@ -2321,13 +2842,14 @@ end
 -- MAIN CORE RESOLVER PIPELINE EXECUTION ENGINE
 -- ============================================================================
 local function resolve_player(player)
-    if not ui.enable:get() then return end
+    if not ui.enable:get() or not is_valid_enemy_target(player) then return end
     if not entity.is_alive(player) then
-        plist.set(player, "Force body yaw", false); plist.set(player, "Force body yaw value", 0); plist.set(player, "Correction active", true); return
+        safe_plist_set(player, "Force body yaw", false); safe_plist_set(player, "Force body yaw value", 0); safe_plist_set(player, "Correction active", true); return
     end
     
     local res_ang, method, s_act, s_ang, l_act, l_ang, j_act, j_ang, chk_mod = 0, "unknown", false, nil, false, nil, false, nil, 1.0
     local data = init_player_data(player)
+    activate_learning_state(player, data, classify_learning_state(player, data))
     hint_best_backtrack_tick(player, data)
     local mode = ui.home.mode:get()
     
@@ -2335,27 +2857,75 @@ local function resolve_player(player)
     if data.last_known_health and hp > data.last_known_health + 50 then data.body_aimable = false; data.lethal_shot_available = false; data.estimated_body_damage = 0 end
     data.last_known_health = hp; init_lag_record(player)
     
-    local x, y, z = entity.get_prop(player, "m_vecOrigin")
-    if x then data.last_position = {x = x, y = y, z = z} end
     calculate_ideal_tick(player, data)
     
-    if mode == "Override" then
-        if ui.resolver.override_left:get() then plist.set(player, "Force body yaw", true); plist.set(player, "Force body yaw value", -60); return
-        elseif ui.resolver.override_right:get() then plist.set(player, "Force body yaw", true); plist.set(player, "Force body yaw value", 60); return
-        elseif ui.resolver.override_center:get() then plist.set(player, "Force body yaw", true); plist.set(player, "Force body yaw value", 0); return end
-    end
-    
     if ui.defensive.enable:get() then
-        detect_defensive_comprehensive(player, data)
-        if data.defensive_ticks > 0 then
+        local detected_now = detect_defensive_comprehensive(player, data)
+        if not detected_now and data.defensive_ticks > 0 then
             local old_t = data.defensive_ticks; data.defensive_ticks = data.defensive_ticks - 1
             if old_t > 0 and data.defensive_ticks <= 0 then
                 data.is_defensive = false
+                data.defensive_confirmed = false
                 if ui.defensive.delay_head:get() then
                     local wait = contains({"fake_up", "fake_down", "pitch_oscillation", "custom_pitch", "switch_pitch"}, data.defensive_type) and 10 or (contains({"teleport", "yaw_flick", "spin"}, data.defensive_type) and 6 or 4)
                     data.defensive_wait_until = globals.tickcount() + (data.confidence < 60 and wait + 3 or (data.confidence > 85 and math.max(2, wait - 2) or wait))
                 end
             end
+        end
+        if data.defensive_ticks <= 0 then
+            data.defensive_ticks = 0
+            data.is_defensive = false
+            data.defensive_confirmed = false
+            data.defensive_method = nil
+            data.defensive_type = nil
+        end
+    else
+        data.is_defensive = false
+        data.defensive_confirmed = false
+        data.defensive_ticks = 0
+        data.defensive_method = nil
+        data.defensive_type = nil
+        data.block_shots = false
+        data.defensive_wait_until = nil
+    end
+
+    if mode == "Override" then
+        data.block_shots = false
+        data.defensive_wait_until = nil
+        safe_plist_set(player, "Override safe point", "-")
+        safe_plist_set(player, "Override prefer body aim", "-")
+        if ui.resolver.override_left:get() then safe_plist_set(player, "Force body yaw", true); safe_plist_set(player, "Force body yaw value", -60); return
+        elseif ui.resolver.override_right:get() then safe_plist_set(player, "Force body yaw", true); safe_plist_set(player, "Force body yaw value", 60); return
+        elseif ui.resolver.override_center:get() then safe_plist_set(player, "Force body yaw", true); safe_plist_set(player, "Force body yaw value", 0); return
+        else safe_plist_set(player, "Force body yaw", false); safe_plist_set(player, "Force body yaw value", 0) end
+    end
+
+    local x, y, z = entity.get_prop(player, "m_vecOrigin")
+    if x then data.last_position = {x = x, y = y, z = z} end
+
+    if ui.defensive.enable:get() and data.is_defensive and (data.defensive_ticks or 0) > 0 then
+        local def_ang = get_defensive_angle(player, data)
+
+        if def_ang ~= nil then
+            data.resolved_angle = clamp(def_ang, -50, 50)
+
+            if data.resolved_angle > 5 then
+                data.last_resolved_side = 1
+            elseif data.resolved_angle < -5 then
+                data.last_resolved_side = -1
+            else
+                data.last_resolved_side = 0
+            end
+
+            data.last_resolve_method = "defensive_" .. tostring(data.defensive_method or "unknown")
+
+            safe_plist_set(player, "Correction active", false)
+            safe_plist_set(player, "Force body yaw", true)
+            safe_plist_set(player, "Force body yaw value", data.resolved_angle)
+            apply_defensive_shot_delay(player, data)
+            if data.roll_suspected then safe_plist_set(player, "Override safe point", "On") end
+
+            return
         end
     end
     
@@ -2364,7 +2934,7 @@ local function resolve_player(player)
     j_act, j_ang = track_pose_delta_speed(player, data); if j_act and j_ang then res_ang = j_ang; method = "jitter_detect"; goto apply_res end
     chk_mod = analyze_choke_stability(player, data)
     
-    if mode == "AI" then res_ang = ai_resolve(player, data); method = "ai"
+    if mode == "AI" then res_ang = ai_resolve(player, data); method = data.last_ai_signal or "ai"
     elseif mode == "Smart" or mode == "Automatic" then res_ang = smart_resolve(player, data); method = "smart"
     elseif mode == "Bruteforce" then
         if ui.resolver.brute_mode:get() == "Intelligent" or ui.resolver.brute_mode:get() == "Adaptive" then data.brute_phase = predict_best_brute_phase(player, data) end
@@ -2376,39 +2946,105 @@ local function resolve_player(player)
     res_ang = res_ang * chk_mod
     
     ::apply_res::
-    if contains(ui.resolver.advanced:get(), "Adaptive Learning") then adaptive_learning(player, data) end
     if contains(ui.resolver.advanced:get(), "Weapon Awareness") then update_weapon_priority(player, data) end
     res_ang = apply_backtrack_compensation(player, data, res_ang)
-    data.resolved_angle = smooth_resolved_angle(player, data, res_ang)
-    data.last_resolved_side = data.resolved_angle > 0 and 1 or -1
+    local final_limit = 50
+    if not data.is_defensive then
+        local speed = get_player_speed_cached(player)
+        final_limit = ui.get_effective_desync_limit(player, speed)
+        res_ang = clamp(res_ang, -final_limit, final_limit)
+    end
+    data.resolved_angle = clamp(smooth_resolved_angle(player, data, res_ang), -final_limit, final_limit)
+    if data.resolved_angle > 5 then
+        data.last_resolved_side = 1
+    elseif data.resolved_angle < -5 then
+        data.last_resolved_side = -1
+    else
+        data.last_resolved_side = 0
+    end
     
-    plist.set(player, "Correction active", false); plist.set(player, "Force body yaw", true); plist.set(player, "Force body yaw value", data.resolved_angle)
-    if not apply_defensive_shot_delay(player, data) and ui.rage.smart_baim:get() then apply_smart_hitbox_override(player, data) end
-    update_resolver_analytics(player, data, nil, method)
+    safe_plist_set(player, "Correction active", false); safe_plist_set(player, "Force body yaw", true); safe_plist_set(player, "Force body yaw value", data.resolved_angle)
+    data.last_resolve_method = method
+    local delayed = apply_defensive_shot_delay(player, data)
+    if data.roll_suspected then
+        safe_plist_set(player, "Override safe point", "On")
+    elseif not delayed and ui.rage.smart_baim:get() then
+        apply_smart_hitbox_override(player, data)
+    end
 end
 
--- ============================================================================
--- SYSTEM EVENT INTERACTION LISTENER HOOKS
--- ============================================================================
-local function on_aim_miss(e)
+-- Shared hitgroup dictionary for clean console outputs
+local hitgroup_names = { 
+    [0] = "body", [1] = "head", [2] = "chest", [3] = "stomach", 
+    [4] = "left arm", [5] = "right arm", [6] = "left leg", [7] = "right leg", [10] = "gear" 
+}
+
+-- Cache for shot telemetry
+local shot_records = {}
+
+client.set_event_callback("aim_fire", function(e)
     if not ui.enable:get() then return end
+    if not is_valid_enemy_target(e.target) then return end
+    local data = resolver_data[e.target]
+    local bt_ticks = math_floor(0.5 + ((e.backtrack or 0) / globals.tickinterval()))
+    if bt_ticks <= 0 and e.tick then
+        bt_ticks = math_max(0, globals.tickcount() - e.tick)
+    end
+    bt_ticks = math_min(bt_ticks, 64)
+    
+    -- Store backtrack, intended damage, and hitchance indexed by the unique shot ID
+    shot_records[e.id] = {
+        target = e.target,
+        backtrack = bt_ticks,
+        hit_chance = e.hit_chance or 0,
+        intended_damage = e.damage or 0,
+        resolve_method = data and data.last_resolve_method or "unknown",
+        brute_mode = data and data.last_brute_mode or nil,
+        weapon_id = get_local_weapon_id(),
+        learning_state = data and data.learning_state or "standing",
+        resolved_angle = data and data.resolved_angle or 0,
+        resolved_side = data and data.last_resolved_side or 0,
+        confidence = data and data.confidence or 0,
+        roll_suspected = data and data.roll_suspected or false
+    }
+    
+    -- Memory Cleanup: Remove old shot records
+    for id, _ in pairs(shot_records) do
+        if id < e.id - 50 then shot_records[id] = nil end
+    end
+end)
+
+local function on_aim_miss(e)
+    local shot = shot_records[e.id]
+    if not ui.enable:get() then shot_records[e.id] = nil; return end
     local target = e.target
-    if not entity.is_alive(target) or entity.get_prop(target, "m_bDormant") then return end
+    if not is_valid_enemy_target(target) or not entity.is_alive(target) or entity.get_prop(target, "m_bDormant") then shot_records[e.id] = nil; return end
     local data = init_player_data(target)
     data.last_shot_time = globals.curtime()
-    local rsn = e.reason or "?"
-    local is_res_miss = not contains({"spread", "prediction error", "death"}, rsn) and (rsn ~= "?" or (e.hit_chance or 0) >= 75)
     
-    data.shots = data.shots + 1; data.misses = data.misses + 1; data.last_shot_hit = false
+    local rsn = e.reason or "?"
+    
+    -- Extract the cached data from when the shot was fired
+    if shot and shot.target ~= target then shot = nil end
+    local telemetry = shot or {}
+    local hc = telemetry.hit_chance or e.hit_chance or 0
+    local bt = telemetry.backtrack or 0
+    local expected_dmg = telemetry.intended_damage or e.damage or 0
+    
+    local is_res_miss = not contains({"spread", "prediction error", "death"}, rsn) and (rsn ~= "?" or hc >= 75)
+    
+    data.shots = data.shots + 1
+    if is_res_miss then data.misses = data.misses + 1; data.last_shot_hit = false end
     if is_res_miss and data.brute_phase_success[data.brute_phase] then data.brute_phase_success[data.brute_phase].misses = data.brute_phase_success[data.brute_phase].misses + 1 end
     
     local mode = ui.home.mode:get()
-    local cur_spd = get_player_speed_cached(target)
-    if data.last_miss_speed and math.abs(cur_spd - data.last_miss_speed) > 150 then
-        data.brute_phase = 1; data.misses = 0; data.confidence = 40
-        if ui.visuals.console_log:get() then client.log("↻ Reset: Player changed movement style") end
+    if is_res_miss then
+        local cur_spd = get_player_speed_cached(target)
+        if data.last_miss_speed and math_abs(cur_spd - data.last_miss_speed) > 150 then
+            data.brute_phase = 1; data.misses = 0; data.confidence = 40
+        end
+        data.last_miss_speed = cur_spd
     end
-    data.last_miss_speed = cur_spd
     
     if is_res_miss and contains({"Bruteforce", "Adaptive", "AI"}, mode) then
         if data.confidence >= 30 then
@@ -2420,52 +3056,115 @@ local function on_aim_miss(e)
         end
     end
     
+    -- Single-line Miss Logging with Resolver Data (Red)
     if ui.visuals.console_log:get() then
-        client.log(string.format("┌─ [Guardian] Miss on %s [%s: %s]", entity.get_player_name(target), is_res_miss and "RESOLVER" or "OTHER", rsn))
-        client.log(string.format("│ Mode: %s | Phase: %d/%d", mode, data.brute_phase, ui.resolver.brute_phases:get()))
-        client.log(string.format("└─ Resolved Angle: %d° | Side: %d | Conf: %d%%", math.floor(data.resolved_angle), data.desync_side, data.confidence))
+        local name = entity.get_player_name(target)
+        local hb = hitgroup_names[e.hitgroup] or "unknown"
+        local ang = math_floor(shot and shot.resolved_angle or data.resolved_angle or 0)
+        local side = shot and shot.resolved_side or data.last_resolved_side or 0
+        local conf = shot and shot.confidence or data.confidence or 0
+        
+        client.color_log(255, 100, 100, string.format("missed  %s  hb: %s  due: %s  dmg: %d  bt: %d  hc: %d%%  ang: %d°  side: %d  conf: %d%%", name, hb, rsn, expected_dmg, bt, math_floor(hc), ang, side, conf))
     end
-    if is_res_miss then data.desync_side = -data.desync_side end
-    if data.shots > 0 then data.hit_rate = data.hits / data.shots end
-    update_velocity_confidence(target, data, false)
+
+    if is_res_miss then data.desync_side = -(data.desync_side or 1) end
+    data.hit_rate = data.hits / math.max(1, data.hits + data.misses)
+    if is_res_miss and shot then
+        local sample_weight = contains(sniper_ids, shot.weapon_id) and 1.5 or 1
+        record_state_learning_result(target, data, shot, false, sample_weight)
+        local pattern = data.brute_patterns[shot.brute_mode or ""]
+        if pattern then
+            pattern.shots = (pattern.shots or 0) + 1
+            pattern.success_rate = (pattern.hits or 0) / pattern.shots
+        end
+        if contains(ui.resolver.advanced:get(), "Adaptive Learning") then adaptive_learning(target, data) end
+    end
+    if is_res_miss then update_velocity_confidence(target, data, false) end
+    shot_records[e.id] = nil
 end
 
 local function on_aim_hit(e)
-    if not ui.enable:get() then return end
-    local target = e.target; local data = init_player_data(target)
-    data.hits = data.hits + 1; data.shots = data.shots + 1; data.confidence = math.min(100, data.confidence + 10); data.last_shot_hit = true
+    local shot = shot_records[e.id]
+    if not ui.enable:get() then shot_records[e.id] = nil; return end
+    local target = e.target
+    if not is_valid_enemy_target(target) then shot_records[e.id] = nil; return end
+    local data = init_player_data(target)
+    data.hits = data.hits + 1; data.shots = data.shots + 1; data.confidence = math_min(100, data.confidence + 10); data.last_shot_hit = true
     update_velocity_confidence(target, data, true)
-    data.last_successful_angle = data.resolved_angle; data.last_successful_time = globals.curtime()
+    data.last_successful_angle = shot and shot.resolved_angle or data.resolved_angle; data.last_successful_time = globals.curtime()
     if apply_smart_baim_preset().reset_on_hit then data.misses = 0 end
-    update_resolver_analytics(target, data, true, data.last_successful_method or "unknown")
-    if data.shots > 0 then data.hit_rate = data.hits / data.shots end
+    if shot and shot.target ~= target then shot = nil end
+    if shot then
+        local sample_weight = contains(sniper_ids, shot.weapon_id) and 1.5 or 1
+        record_state_learning_result(target, data, shot, true, sample_weight)
+        local pattern = data.brute_patterns[shot.brute_mode or ""]
+        if pattern then
+            pattern.shots = (pattern.shots or 0) + 1
+            pattern.hits = (pattern.hits or 0) + 1
+            pattern.success_rate = pattern.hits / pattern.shots
+        end
+        if contains(ui.resolver.advanced:get(), "Adaptive Learning") then adaptive_learning(target, data) end
+    end
+    data.hit_rate = data.hits / math.max(1, data.hits + data.misses)
     if data.hit_rate > 0.6 then data.brute_working = true end
     
     local cp = data.brute_phase
     if data.brute_phase_success[cp] then data.brute_phase_success[cp].hits = data.brute_phase_success[cp].hits + 1; data.brute_phase_success[cp].time = globals.curtime() end
-    local hg_names = { [0] = "generic", [1] = "head", [2] = "chest", [3] = "stomach", [4] = "left arm", [5] = "right arm", [6] = "left leg", [7] = "right leg" }
-    local hg = hg_names[e.hitgroup] or "unknown"
+    
+    local hg = hitgroup_names[e.hitgroup] or "unknown"
     if not data.hitgroup_angles[hg] then data.hitgroup_angles[hg] = {} end
-    table.insert(data.hitgroup_angles[hg], data.resolved_angle); if #data.hitgroup_angles[hg] > 10 then table.remove(data.hitgroup_angles[hg], 1) end
+    table.insert(data.hitgroup_angles[hg], shot and shot.resolved_angle or data.resolved_angle); if #data.hitgroup_angles[hg] > 10 then table.remove(data.hitgroup_angles[hg], 1) end
+
+    -- Single-line Hit Logging with Resolver Data (Green)
+    if ui.visuals.console_log:get() then
+        local name = entity.get_player_name(target)
+        local dmg = e.damage or 0
+        local bt = shot and shot.backtrack or 0
+        local hc = shot and shot.hit_chance or e.hit_chance or 0
+        local ang = math_floor(shot and shot.resolved_angle or data.resolved_angle or 0)
+        local side = shot and shot.resolved_side or data.last_resolved_side or 0
+        local conf = shot and shot.confidence or data.confidence or 0
+        
+        client.color_log(150, 255, 150, string.format("hit  %s  hb: %s  dmg: %d  bt: %d  hc: %d%%  ang: %d°  side: %d  conf: %d%%", name, hg, dmg, bt, math_floor(hc), ang, side, conf))
+    end
+    shot_records[e.id] = nil
 end
 
 local function on_round_start()
-    last_target = nil; last_mindmg_override = nil; last_weapon_id = nil; restore_mindmg()
-    client.delay_call(0.5, function() save_current_mindmg() end)
-    eye_angle_data = {}; entity_cache = {}; entity_cache_time = {}
-    for p, _ in pairs(resolver_cache) do
-        if not entity.is_alive(p) and not entity.is_dormant(p) then
-            resolver_cache[p] = nil; speed_cache[p] = nil; damage_cache[p] = nil; defensive_check_cache[p] = nil
-        end
-    end
+    restore_mindmg(); last_weapon_id = nil
     for p, d in pairs(resolver_data) do
-        d.misses = 0; d.hits = 0; d.shots = 0; d.hit_rate = 0; d.brute_phase = 1; d.confidence = 0; d.brute_locked = false; d.brute_working = false; d.is_defensive = false; d.defensive_ticks = 0
+        d.misses = 0; d.hits = 0; d.shots = 0; d.hit_rate = 0; d.brute_phase = 1; d.confidence = 0; d.brute_locked = false; d.brute_working = false; d.is_defensive = false; d.defensive_confirmed = false; d.defensive_ticks = 0
         d.standing_ticks = 0; d.moving_ticks = 0; d.fake_desync_detected = false; d.suspicious_animation = false; d.defensive_wait_until = nil
-        if d.analytics then d.analytics.overall_success_rate = 0; d.analytics.total_resolves = 0; d.analytics.successful_resolves = 0 end
+        save_learning_profile(p, d)
+        local profile = get_learning_profile(p)
+        if profile then
+            for _, state in pairs(profile.states) do
+                state.analytics.total_resolves = state.analytics.total_resolves * 0.85
+                state.analytics.successful_resolves = state.analytics.successful_resolves * 0.85
+                state.analytics.overall_success_rate = state.analytics.successful_resolves / math.max(1, state.analytics.total_resolves)
+                for method, successes in pairs(state.analytics.method_success) do
+                    state.analytics.method_success[method] = successes * 0.85
+                end
+                for _, result in pairs(state.angle_results) do
+                    result.hits = result.hits * 0.85
+                    result.misses = result.misses * 0.85
+                end
+                state.roll_hits = state.roll_hits * 0.85
+                state.roll_misses = state.roll_misses * 0.85
+            end
+        end
         d.body_aimable = false; d.lethal_shot_available = false; d.estimated_body_damage = 0; d.last_known_health = nil; d.baim_reason = nil
-        pcall(function() plist.set(p, "Override prefer body aim", "-"); plist.set(p, "Minimum damage override", 0); plist.set(p, "Override safe point", "-"); plist.set(p, "Force body yaw", false); plist.set(p, "Force body yaw value", 0) end)
+        safe_plist_set(p, "Override prefer body aim", "-")
+        safe_plist_set(p, "Minimum damage override", 0)
+        safe_plist_set(p, "Override safe point", "-")
+        safe_plist_set(p, "Force body yaw", false)
+        safe_plist_set(p, "Force body yaw value", 0)
     end
-    speed_cache = {}; damage_cache = {}
+    lag_records = {}; defensive_records = {}; resolver_cache = {}
+    defensive_check_cache = {}; defensive_check_time = {}
+    speed_cache = {}; speed_cache_time = {}; damage_cache = {}; damage_cache_time = {}
+    eye_angle_data = {}; entity_cache = {}; entity_cache_time = {}
+    prev_simtime = {}; choke_cache = {}; choke_cache_tick = {}; shot_records = {}
 end
 
 -- ============================================================================
@@ -2476,42 +3175,52 @@ local clantag_suffix = "+"
 local clantag_frames = {}
 
 for i = 1, #clantag_base do
-    clantag_frames[#clantag_frames + 1] = clantag_base:sub(1, i) .. clantag_suffix
+    table.insert(clantag_frames, clantag_base:sub(1, i) .. clantag_suffix)
 end
-clantag_frames[#clantag_frames + 1] = clantag_base .. clantag_suffix
+table.insert(clantag_frames, clantag_base .. clantag_suffix)
 for i = #clantag_base - 1, 1, -1 do
-    clantag_frames[#clantag_frames + 1] = clantag_base:sub(1, i) .. clantag_suffix
+    table.insert(clantag_frames, clantag_base:sub(1, i) .. clantag_suffix)
 end
 
 local last_clantag_frame = -1
-local clantag_cleared = false
+local original_clantag_restored = false
 
 local function handle_clantag()
     if not ui.enable:get() or not ui.visuals.clantag:get() then
-        if not clantag_cleared then
+        if not original_clantag_restored then
             client.set_clan_tag("")
+            original_clantag_restored = true
             last_clantag_frame = -1
-            clantag_cleared = true
         end
         return
     end
 
-    clantag_cleared = false
-    local frame = math_floor(globals.curtime() * 2.5) % #clantag_frames + 1
-    if frame ~= last_clantag_frame then
-        client.set_clan_tag(clantag_frames[frame])
-        last_clantag_frame = frame
+    original_clantag_restored = false
+    local current_frame = math_floor(globals.curtime() * 2.5) % #clantag_frames + 1
+
+    if current_frame ~= last_clantag_frame then
+        client.set_clan_tag(clantag_frames[current_frame])
+        last_clantag_frame = current_frame
     end
 end
 
 -- ============================================================================
 -- CANVAS GRAPHICS RENDERING SYSTEM INTERFACE INDICATORS
 -- ============================================================================
+local function has_confirmed_defensive(data)
+    return data
+        and data.is_defensive
+        and data.defensive_confirmed
+        and (data.defensive_ticks or 0) > 0
+        and data.last_defensive_detect
+        and globals.tickcount() - data.last_defensive_detect <= 12
+end
+
 local function draw_indicator()
     if not ui.home.indicator:get() then return end
     local sw, sh = client.screen_size()
     local x, y, style = sw / 2, sh / 2 + 50, ui.visuals.indicator_style:get()
-    local target = client.current_threat()
+    local target = get_valid_current_threat()
     
     -- If there are no enemies, show the idle state
     if not target or not entity.is_alive(target) then 
@@ -2535,13 +3244,13 @@ local function draw_indicator()
         renderer.text(x, y, r, g, b, 255, "c", 0, string.format("Target: %s [%d%%]", entity.get_player_name(target), data.confidence))
         renderer.text(x, y + 15, r, g, b, 255, "c", 0, string.format("Mode: %s | Phase: %d/%d", ui.home.mode:get(), data.brute_phase, ui.resolver.brute_phases:get()))
         renderer.text(x, y + 30, r, g, b, 255, "c", 0, string.format("Angle: %d° | Hit Rate: %.1f%%", data.resolved_angle, (data.hit_rate or 0) * 100))
-        if data.is_defensive then renderer.text(x, y + 45, 255, 50, 50, 255, "c", 0, "DEFENSIVE AA DETECTED") end
+        if has_confirmed_defensive(data) then renderer.text(x, y + 45, 255, 50, 50, 255, "c", 0, "DEFENSIVE AA DETECTED") end
     
     elseif style == "Debug" then
         renderer.text(x, y, r, g, b, 255, "c", 0, string.format("Guardian Debug - %s", entity.get_player_name(target)))
         renderer.text(x, y + 15, 255, 255, 255, 255, "c", 0, string.format("Angle: %d° | Side: %d | Conf: %d%%", data.resolved_angle, data.desync_side, data.confidence))
         renderer.text(x, y + 30, 255, 255, 255, 255, "c", 0, string.format("Hits: %d | Misses: %d | Standing: %dt", data.hits, data.misses, data.standing_ticks))
-        if data.is_defensive then renderer.text(x, y + 45, 255, 50, 50, 255, "c", 0, string.format("DEFENSIVE ACTIVE: %s", data.defensive_type or "unknown")) end
+        if has_confirmed_defensive(data) then renderer.text(x, y + 45, 255, 50, 50, 255, "c", 0, string.format("DEFENSIVE ACTIVE: %s", data.defensive_type or "unknown")) end
     
     elseif style == "Simple" then
         renderer.text(x, y, r, g, b, 255, "c", 0, string.format("%s | %d%%", entity.get_player_name(target), data.confidence))
@@ -2553,7 +3262,7 @@ end
 
 local function draw_debug_info()
     if not ui.visuals.debug:get() then return end
-    local target = client.current_threat()
+    local target = get_valid_current_threat()
     if not target or not entity.is_alive(target) then return end
     local x, y, data = 10, 200, init_player_data(target)
     
@@ -2561,6 +3270,41 @@ local function draw_debug_info()
     renderer.text(x, y, 255, 255, 255, 255, "", 0, string.format("Side Preference: %d | Angle: %d°", data.desync_side, data.resolved_angle)); y = y + 15
     renderer.text(x, y, 255, 255, 255, 255, "", 0, string.format("Brute State Cycle: %d | Hits/Shots: %d/%d", data.brute_phase, data.hits, data.shots)); y = y + 15
     renderer.text(x, y, 255, 50, 50, 255, "", 0, string.format("Defensive Subsystems Active: %s (%s)", tostring(data.is_defensive), tostring(data.defensive_type)))
+end
+
+local function draw_learning_debug()
+    if not ui.visuals.learning_debug:get() then return end
+    local enemies = entity.get_players(true)
+    if not enemies then return end
+
+    local x, y = 10, 285
+    renderer.text(x, y, 150, 200, 255, 255, "", 0, "=== Resolver Learning States ===")
+    y = y + 15
+
+    for i = 1, #enemies do
+        local player = enemies[i]
+        local data = resolver_data[player]
+        if data then
+            local state_name = data.learning_state or "standing"
+            local state = get_learning_state(player, state_name)
+            if state then
+                local profile = get_learning_profile(player)
+                local stored_states = 0
+                if profile then for _ in pairs(profile.states) do stored_states = stored_states + 1 end end
+                local samples = state.analytics.total_resolves or 0
+                local success = state.analytics.overall_success_rate or 0
+                local angle_count = 0
+                for _ in pairs(state.angle_results) do angle_count = angle_count + 1 end
+                local roll_samples = (state.roll_hits or 0) + (state.roll_misses or 0)
+                local r, g, b = samples > 0 and 150 or 170, samples > 0 and 255 or 170, samples > 0 and 150 or 170
+                renderer.text(x, y, r, g, b, 255, "", 0, string.format(
+                    "%s | %s (%d saved) | %.1f samples | %.0f%% success | %d angles | roll %.1f",
+                    entity.get_player_name(player), state_name, stored_states, samples, success * 100, angle_count, roll_samples
+                ))
+                y = y + 14
+            end
+        end
+    end
 end
 
 local function draw_watermark()
@@ -2672,7 +3416,7 @@ end)
 
 client.register_esp_flag("DEFENSIVE AA ⚠", 255, 50, 50, function(ent)
     if not ui.enable:get() or not ui.visuals.resolver_flags:get() or not entity.is_enemy(ent) or not entity.is_alive(ent) then return false end
-    return resolver_data[ent] and resolver_data[ent].is_defensive and resolver_data[ent].defensive_ticks > 0
+    return has_confirmed_defensive(resolver_data[ent])
 end)
 
 -- ============================================================================
@@ -2680,75 +3424,31 @@ end)
 -- ============================================================================
 local config_presets = {
     ["Default"] = {
-        mode = "AI",
-        indicator = false,
-        detection = {
-            "Animation Analysis", "Movement Tracking", "LBY Analysis", "Velocity Prediction", 
-            "Pose Parameters", "Layer Weight", "Micro Movement", "Standing Detection", 
-            "Pattern Recognition", "Desync Break Detection"
-        },
-        brute_mode = "Intelligent",
-        brute_phases = 5,
-        brute_reset = 2,
-        advanced = {
-            "Anti-Freestand", "Body Aim Fix", "Low Delta Detect", "Jitter Detection", 
-            "Micro Movement", "Standing Resolver", "Smart Prediction", "Animation Fix", 
-            "Pattern Analysis", "Context Awareness", "Peek Prediction", "Adaptive Learning", 
-            "Weapon Awareness"
-        },
-        desync_strength = 75,
-        confidence = 70,
-        reaction_time = 10,
-        ai_aggression = 50,
-        ai_learning = 100,
-        defensive = true,
-        defensive_options = {
-            "Simulation Check", "Lag Compensation", "Velocity Exploit", "Teleport Detection", 
-            "Smart Backtrack", "Prediction Fix", "Layer Correlation"
-        },
-        defensive_peek_fix = true,
-        peek_prediction_time = 50,
-        peek_min_damage = 10,
-        peek_auto_enable = {
-            "Enemy has AWP", "Enemy has Scout", "You have AWP/Scout", "Low health (<50HP)"
-        },
-        delay_head = true,
-        smart_baim_enable = true,
-        smart_baim_mode = "Default",
-        lethal_enable = true,
-        lethal_threshold = 80,
-        accuracy_threshold = 75,
-        lethal_mode = "Prefer body (flexible)",
-        lethal_override_mindmg = false,
-        ideal_tick_enable = true,
-        fakelag_enable = true,
-        predictive_autostop = true,
-        clantag = true,
-        watermark = true,
-        watermark_color = {150, 200, 255, 255},
-        resolver_flags = true,
-        show_lethal_flag = true,
-        lethal_flag_style = "Simple",
-        debug = false,
-        console_log = true,
-        killsay = false,
-        description = "Fully configured based on verified UI specifications"
-    },
-    ["Aggressive"] = { mode = "AI", detection = {"Animation Analysis", "LBY Analysis", "Pattern Recognition", "Desync Break Detection"}, defensive = true, brute_mode = "Adaptive", brute_phases = 7, brute_reset = 1, advanced = {"Jitter Detection", "Smart Prediction", "Peek Prediction", "Adaptive Learning", "Weapon Awareness"}, desync_strength = 85, confidence = 60, smart_baim_enable = true, smart_baim_mode = "Aggressive", ideal_tick_enable = true, fakelag_enable = true, defensive_peek_fix = true, peek_prediction_time = 120, peek_min_damage = 20, description = "Hyper-aggressive setting tuned for fast paced operations." },
-    ["Defensive"] = { mode = "AI", detection = {"Animation Analysis", "Movement Tracking", "LBY Analysis", "Pattern Recognition"}, defensive = true, brute_mode = "Intelligent", brute_phases = 6, brute_reset = 2, advanced = {"Body Aim Fix", "Context Awareness", "Adaptive Learning", "Weapon Awareness"}, desync_strength = 75, confidence = 70, smart_baim_enable = true, smart_baim_mode = "Defensive", ideal_tick_enable = true, fakelag_enable = true, defensive_peek_fix = true, peek_prediction_time = 250, peek_min_damage = 30, description = "Conservative setting optimized for stable long range sniper usage." }
+        description = "Tama setting.",
+        code = "eyJkZWZlbnNpdmVfc2lnbmFscyI6e30sImxldGhhbF9mbGFnX3N0eWxlIjoiU2ltcGxlIiwiaW5kaWNhdG9yIjpmYWxzZSwicGVla19taW5fZGFtYWdlIjoxMCwiYnJ1dGVfcGhhc2VzIjozLCJkZWZlbnNpdmUiOnRydWUsImJydXRlX3Jlc2V0IjoyLCJwZWVrX2F1dG9fZW5hYmxlIjpbIkVuZW15IGhhcyBBV1AiLCJFbmVteSBoYXMgU2NvdXQiLCJZb3UgaGF2ZSBBV1BcL1Njb3V0IiwiTG93IGhlYWx0aCAoPDUwSFApIl0sImtpbGxzYXkiOmZhbHNlLCJ3YXRlcm1hcmtfY29sb3IiOlsxNTksMTEyLDExMiwyNTVdLCJjbGFudGFnIjp0cnVlLCJzbWFydF9iYWltX2VuYWJsZSI6dHJ1ZSwibGV0aGFsX292ZXJyaWRlX21pbmRtZyI6ZmFsc2UsImxldGhhbF9tb2RlIjoiUHJlZmVyIGJvZHkgKGZsZXhpYmxlKSIsImVuYWJsZWQiOnRydWUsImFkdmFuY2VkIjpbIkxvdyBEZWx0YSBEZXRlY3QiLCJBZGFwdGl2ZSBMZWFybmluZyIsIldlYXBvbiBBd2FyZW5lc3MiXSwiaW5kaWNhdG9yX3N0eWxlIjoiU2ltcGxlIiwid2F0ZXJtYXJrIjp0cnVlLCJjb25zb2xlX2xvZyI6dHJ1ZSwibGVhcm5pbmdfZGVidWciOmZhbHNlLCJkZWZlbnNpdmVfcGVla19maXgiOnRydWUsImxldGhhbF9mbGFnX2NvbG9yIjpbMjU1LDAsMCwyNTVdLCJzaG93X2xldGhhbF9mbGFnIjp0cnVlLCJsZXRoYWxfdGhyZXNob2xkIjo4MCwiZGVmZW5zaXZlX2NvbmZpZGVuY2UiOjkyLCJwcmVkaWN0aXZlX2F1dG9zdG9wIjp0cnVlLCJjb25maWRlbmNlIjoxMDAsInBlZWtfcHJlZGljdGlvbl90aW1lIjo1MCwicmVzb2x2ZXJfZmxhZ3MiOnRydWUsImFjY3VyYWN5X3RocmVzaG9sZCI6NzUsImxldGhhbF9lbmFibGUiOnRydWUsImJydXRlX21vZGUiOiJTZXF1ZW50aWFsIiwiZGVsYXlfaGVhZCI6ZmFsc2UsIm1vZGUiOiJBSSIsInNtYXJ0X2JhaW1fbW9kZSI6IkRlZmF1bHQiLCJhaV9sZWFybmluZyI6MTAwLCJkZWJ1ZyI6ZmFsc2UsImZha2VsYWdfZW5hYmxlIjp0cnVlLCJpZGVhbF90aWNrX2VuYWJsZSI6dHJ1ZSwiZGVmZW5zaXZlX3N0cmF0ZWd5IjoiQWdncmVzc2l2ZSJ9"
+    }
 }
 
 local config_system = {}
+function config_system.filter_options(values, allowed)
+    local filtered = {}
+    for _, value in ipairs(type(values) == "table" and values or {}) do
+        if contains(allowed, value) then filtered[#filtered + 1] = value end
+    end
+    return filtered
+end
+
 function config_system.get_current_config()
+    local flag_r, flag_g, flag_b, flag_a = ui.visuals.lethal_flag_color:get()
     local watermark_r, watermark_g, watermark_b, watermark_a = ui.visuals.watermark_color:get()
     return {
-        mode = ui.home.mode:get(), indicator = ui.home.indicator:get(),
-        detection = ui.resolver.detection:get(), brute_mode = ui.resolver.brute_mode:get(),
+        enabled = ui.enable:get(), mode = ui.home.mode:get(), indicator = ui.home.indicator:get(),
+        brute_mode = ui.resolver.brute_mode:get(),
         brute_phases = ui.resolver.brute_phases:get(), brute_reset = ui.resolver.brute_reset:get(),
-        advanced = ui.resolver.advanced:get(), desync_strength = ui.resolver.desync_strength:get(),
-        confidence = ui.resolver.confidence:get(), reaction_time = ui.resolver.reaction_time:get(),
-        ai_aggression = ui.resolver.ai_aggression:get(), ai_learning = ui.resolver.ai_learning:get(),
-        defensive = ui.defensive.enable:get(), defensive_options = ui.defensive.options:get(),
+        advanced = ui.resolver.advanced:get(), confidence = ui.resolver.confidence:get(),
+        ai_learning = ui.resolver.ai_learning:get(), defensive = ui.defensive.enable:get(),
+        defensive_strategy = ui.defensive.strategy:get(), defensive_signals = ui.defensive.signals:get(),
+        defensive_confidence = ui.defensive.min_confidence:get(),
         defensive_peek_fix = ui.defensive.peek_fix:get(), peek_prediction_time = ui.defensive.peek_time:get(),
         peek_min_damage = ui.defensive.peek_min_damage:get(), peek_auto_enable = ui.defensive.peek_auto_enable:get(),
         delay_head = ui.defensive.delay_head:get(), smart_baim_enable = ui.rage.smart_baim:get(),
@@ -2760,7 +3460,8 @@ function config_system.get_current_config()
         clantag = ui.visuals.clantag:get(), watermark = ui.visuals.watermark:get(),
         watermark_color = {watermark_r, watermark_g, watermark_b, watermark_a}, indicator_style = ui.visuals.indicator_style:get(),
         resolver_flags = ui.visuals.resolver_flags:get(), show_lethal_flag = ui.visuals.show_lethal_flag:get(),
-        lethal_flag_style = ui.visuals.lethal_flag_style:get(), debug = ui.visuals.debug:get(),
+        lethal_flag_style = ui.visuals.lethal_flag_style:get(), lethal_flag_color = {flag_r, flag_g, flag_b, flag_a}, debug = ui.visuals.debug:get(),
+        learning_debug = ui.visuals.learning_debug:get(),
         console_log = ui.visuals.console_log:get(), killsay = ui.visuals.killsay:get()
     }
 end
@@ -2768,23 +3469,20 @@ end
 function config_system.apply_config(cfg)
     if cfg.mode ~= nil then ui.home.mode:set(cfg.mode) end
     if cfg.indicator ~= nil then ui.home.indicator:set(cfg.indicator) end
-    if cfg.detection ~= nil then ui.resolver.detection:set(cfg.detection) end
     if cfg.brute_mode ~= nil then ui.resolver.brute_mode:set(cfg.brute_mode) end
     if cfg.brute_phases ~= nil then ui.resolver.brute_phases:set(cfg.brute_phases) end
     if cfg.brute_reset ~= nil then ui.resolver.brute_reset:set(cfg.brute_reset) end
-    if cfg.advanced ~= nil then ui.resolver.advanced:set(cfg.advanced) end
-    if cfg.desync_strength ~= nil then ui.resolver.desync_strength:set(cfg.desync_strength) end
+    if cfg.advanced ~= nil then ui.resolver.advanced:set(config_system.filter_options(cfg.advanced, {"Low Delta Detect", "Adaptive Learning", "Weapon Awareness"})) end
     if cfg.confidence ~= nil then ui.resolver.confidence:set(cfg.confidence) end
-    if cfg.reaction_time ~= nil then ui.resolver.reaction_time:set(cfg.reaction_time) end
-    if cfg.ai_aggression ~= nil then ui.resolver.ai_aggression:set(cfg.ai_aggression) end
     if cfg.ai_learning ~= nil then ui.resolver.ai_learning:set(cfg.ai_learning) end
     if cfg.defensive ~= nil then ui.defensive.enable:set(cfg.defensive) end
-    if cfg.options ~= nil then ui.defensive.options:set(cfg.options) end
-    if cfg.defensive_options ~= nil then ui.defensive.options:set(cfg.defensive_options) end
+    if cfg.defensive_strategy ~= nil then ui.defensive.strategy:set(cfg.defensive_strategy) end
+    if cfg.defensive_signals ~= nil then ui.defensive.signals:set(config_system.filter_options(cfg.defensive_signals, {"Simulation", "Choke", "Eye Angles", "Pitch", "Spin", "Animation Layers"})) end
+    if cfg.defensive_confidence ~= nil then ui.defensive.min_confidence:set(cfg.defensive_confidence) end
     if cfg.defensive_peek_fix ~= nil then ui.defensive.peek_fix:set(cfg.defensive_peek_fix) end
     if cfg.peek_prediction_time ~= nil then ui.defensive.peek_time:set(cfg.peek_prediction_time) end
     if cfg.peek_min_damage ~= nil then ui.defensive.peek_min_damage:set(cfg.peek_min_damage) end
-    if cfg.peek_auto_enable ~= nil then ui.defensive.peek_auto_enable:set(cfg.peek_auto_enable) end
+    if cfg.peek_auto_enable ~= nil then ui.defensive.peek_auto_enable:set(config_system.filter_options(cfg.peek_auto_enable, {"Enemy has AWP", "Enemy has Scout", "You have AWP/Scout", "Low health (<50HP)"})) end
     if cfg.delay_head ~= nil then ui.defensive.delay_head:set(cfg.delay_head) end
     if cfg.smart_baim_enable ~= nil then ui.rage.smart_baim:set(cfg.smart_baim_enable) end
     if cfg.smart_baim_mode ~= nil then ui.rage.mode:set(cfg.smart_baim_mode) end
@@ -2803,9 +3501,12 @@ function config_system.apply_config(cfg)
     if cfg.resolver_flags ~= nil then ui.visuals.resolver_flags:set(cfg.resolver_flags) end
     if cfg.show_lethal_flag ~= nil then ui.visuals.show_lethal_flag:set(cfg.show_lethal_flag) end
     if cfg.lethal_flag_style ~= nil then ui.visuals.lethal_flag_style:set(cfg.lethal_flag_style) end
+    if cfg.lethal_flag_color ~= nil then ui.visuals.lethal_flag_color:set(unpack(cfg.lethal_flag_color)) end
     if cfg.debug ~= nil then ui.visuals.debug:set(cfg.debug) end
+    if cfg.learning_debug ~= nil then ui.visuals.learning_debug:set(cfg.learning_debug) end
     if cfg.console_log ~= nil then ui.visuals.console_log:set(cfg.console_log) end
     if cfg.killsay ~= nil then ui.visuals.killsay:set(cfg.killsay) end
+    if cfg.enabled ~= nil then ui.enable:set(cfg.enabled) end
 end
 
 -- ============================================================================
@@ -2824,7 +3525,6 @@ local function handle_menu_visibility()
     
     local is_res_tab = enabled and tab == "Resolver"
     local m_mode = ui.home.mode:get()
-    ui.resolver.detection:set_visible(is_res_tab and contains({"Smart", "Automatic", "Adaptive", "AI"}, m_mode))
     ui.resolver.brute_mode:set_visible(is_res_tab and contains({"Bruteforce", "Adaptive", "AI"}, m_mode))
     ui.resolver.brute_phases:set_visible(is_res_tab and contains({"Bruteforce", "Adaptive", "AI"}, m_mode))
     ui.resolver.brute_reset:set_visible(is_res_tab and contains({"Bruteforce", "Adaptive", "AI"}, m_mode))
@@ -2832,15 +3532,15 @@ local function handle_menu_visibility()
     ui.resolver.override_left:set_visible(is_res_tab and m_mode == "Override")
     ui.resolver.override_right:set_visible(is_res_tab and m_mode == "Override")
     ui.resolver.override_center:set_visible(is_res_tab and m_mode == "Override")
-    ui.resolver.desync_strength:set_visible(is_res_tab)
     ui.resolver.confidence:set_visible(is_res_tab and contains({"Adaptive", "AI"}, m_mode))
-    ui.resolver.reaction_time:set_visible(is_res_tab)
-    ui.resolver.ai_aggression:set_visible(is_res_tab and m_mode == "AI")
     ui.resolver.ai_learning:set_visible(is_res_tab and m_mode == "AI")
     
     local is_def_tab = enabled and tab == "Anti-Aim"
     ui.defensive.enable:set_visible(is_def_tab)
-    ui.defensive.options:set_visible(is_def_tab and ui.defensive.enable:get())
+    local custom_defensive = is_def_tab and ui.defensive.enable:get() and ui.defensive.strategy:get() == "Custom"
+    ui.defensive.strategy:set_visible(is_def_tab and ui.defensive.enable:get())
+    ui.defensive.signals:set_visible(custom_defensive)
+    ui.defensive.min_confidence:set_visible(custom_defensive)
     ui.defensive.peek_fix:set_visible(is_def_tab)
     ui.defensive.peek_time:set_visible(is_def_tab and ui.defensive.peek_fix:get())
     ui.defensive.peek_min_damage:set_visible(is_def_tab and ui.defensive.peek_fix:get())
@@ -2872,6 +3572,7 @@ local function handle_menu_visibility()
     ui.visuals.lethal_flag_style:set_visible(flg_on)
     ui.visuals.lethal_flag_color:set_visible(flg_on)
     ui.visuals.debug:set_visible(is_vis_tab)
+    ui.visuals.learning_debug:set_visible(is_vis_tab)
     ui.visuals.console_log:set_visible(is_vis_tab)
     ui.visuals.killsay:set_visible(is_vis_tab)
     
@@ -2886,28 +3587,55 @@ end
 -- ============================================================================
 -- SYSTEM SUBORDINATION EVENT INTERACTION CALL CONNECTIONS
 -- ============================================================================
+local guardian_overrides_released = false
+
+local function release_guardian_overrides()
+    if guardian_overrides_released then return end
+    guardian_overrides_released = true
+
+    local players = entity.get_players(true)
+    if players then
+        for i = 1, #players do
+            local player = players[i]
+            safe_plist_set(player, "Force body yaw", false)
+            safe_plist_set(player, "Force body yaw value", 0)
+            safe_plist_set(player, "Correction active", true)
+            safe_plist_set(player, "Override prefer body aim", "-")
+            safe_plist_set(player, "Override safe point", "-")
+            safe_plist_set(player, "Minimum damage override", 0)
+        end
+    end
+
+    fakelag_ref:override()
+    exploits:should_force_defensive(false)
+    exploits:allow_unsafe_charge(false)
+
+    restore_mindmg()
+    last_weapon_id = nil
+end
+
 client.set_event_callback("paint", function()
-    handle_clantag()
     if not ui.enable:get() then return end
     draw_indicator()
     draw_debug_info()
+    draw_learning_debug()
     draw_watermark()
     draw_lethal_flags()
+    handle_clantag()
 end)
 
 client.set_event_callback("net_update_end", function()
     if not ui.enable:get() then
-        local p = entity.get_players(true)
-        if p then for i=1,#p do plist.set(p[i], "Force body yaw", false) end end; return
+        release_guardian_overrides()
+        return
     end
+    guardian_overrides_released = false
     
     if exploits:is_defensive_ended() then for _, c in pairs(resolver_cache) do if c then c.result = nil; c.tick = nil end end end
     for p, d in pairs(resolver_data) do
         if not entity.is_alive(p) or entity.is_dormant(p) then
             d.dormant_ticks = (d.dormant_ticks or 0) + 1
-            if d.dormant_ticks > 32 then
-                resolver_data[p] = nil; lag_records[p] = nil; defensive_records[p] = nil; speed_cache[p] = nil; damage_cache[p] = nil; eye_angle_data[p] = nil; resolver_cache[p] = nil; defensive_check_cache[p] = nil
-            end
+            if d.dormant_ticks > 32 then ui.clear_player_runtime(p) end
         else d.dormant_ticks = 0 end
     end
     
@@ -2915,35 +3643,63 @@ client.set_event_callback("net_update_end", function()
     if not enemies or #enemies == 0 then return end
     for i = 1, #enemies do
         local enemy = enemies[i]
-        if entity.is_alive(enemy) then plist.set(enemy, "Correction active", true); resolve_player(enemy) else plist.set(enemy, "Force body yaw", false) end
+        if entity.is_alive(enemy) then
+            safe_plist_set(enemy, "Correction active", true)
+            resolve_player(enemy)
+        else
+            safe_plist_set(enemy, "Force body yaw", false)
+            safe_plist_set(enemy, "Force body yaw value", 0)
+            safe_plist_set(enemy, "Override prefer body aim", "-")
+            safe_plist_set(enemy, "Override safe point", "-")
+            safe_plist_set(enemy, "Minimum damage override", 0)
+        end
     end
 end)
 
 client.set_event_callback("setup_command", function(cmd)
     if not ui.enable:get() then
-        fakelag_ref:override()
+        release_guardian_overrides()
         return
     end
+    guardian_overrides_released = false
     local cur_w = get_local_weapon_id()
-    if cur_w and cur_w ~= last_weapon_id then save_current_mindmg(); last_weapon_id = cur_w end
+    if cur_w ~= last_weapon_id then
+        restore_mindmg()
+        last_weapon_id = cur_w
+    end
     optimize_fakelag(cmd)
     exploits:should_force_defensive(should_force_defensive_peek())
     
-    local threat = client.current_threat()
+    local threat = get_valid_current_threat()
     apply_predictive_autostop(cmd, threat)
-    if threat then exploits:allow_unsafe_charge(not (resolver_data[threat] and resolver_data[threat].confidence > 80)) end
+    if threat then
+        exploits:allow_unsafe_charge(not (resolver_data[threat] and resolver_data[threat].confidence > 80))
+    else
+        exploits:allow_unsafe_charge(false)
+    end
     
     local p = entity.get_players(true)
     if p then
         for i=1,#p do
             local enemy = p[i]; local d = resolver_data[enemy]
             if d and entity.is_alive(enemy) then
-                if ui.rage.smart_baim:get() then apply_smart_hitbox_override(enemy, d) end
-                if ui.defensive.delay_head:get() and d.block_shots then
+                if d.roll_suspected then
+                    safe_plist_set(enemy, "Override safe point", "On")
+                elseif ui.rage.smart_baim:get() then
+                    apply_smart_hitbox_override(enemy, d)
+                else
+                    safe_plist_set(enemy, "Override prefer body aim", "-")
+                    safe_plist_set(enemy, "Override safe point", "-")
+                    safe_plist_set(enemy, "Minimum damage override", 0)
+                end
+                if not ui.defensive.enable:get() or not ui.defensive.delay_head:get() then
+                    d.block_shots = false
+                elseif d.block_shots and enemy == threat then
                     local me = entity.get_local_player()
                     if me and entity.get_player_weapon(me) then
-                        local wid = entity.get_prop(entity.get_player_weapon(me), "m_iItemDefinitionIndex")
-                        if wid and contains({1,2,3,4,7,8,9,10,11,13,14,16,17,19,24,25,26,27,28,29,30,32,33,34,35,36,38,39,40,60,61,63,64}, wid) then cmd.in_attack = false end
+                        local wid = bit.band(entity.get_prop(entity.get_player_weapon(me), "m_iItemDefinitionIndex") or 0, 0xFFFF)
+                        -- Clearing attack interrupts the Revolver's cocking sequence.
+                        if wid ~= 64 and contains({1,2,3,4,7,8,9,10,11,13,14,16,17,19,24,25,26,27,28,29,30,32,33,34,35,36,38,39,40,60,61,63}, wid) then cmd.in_attack = false end
                     end
                 end
             end
@@ -2954,32 +3710,22 @@ client.set_event_callback("setup_command", function(cmd)
         local d = resolver_data[threat]
         if d and d.lethal_mindmg_required then
             local req = d.lethal_mindmg_required
-            if threat ~= last_target or req ~= last_mindmg_value then if ref_mindmg then save_current_mindmg(); ref_mindmg:set(req); last_mindmg_value = req; last_target = threat end end
-        else if last_mindmg_value ~= nil then restore_mindmg(); last_mindmg_value = nil end end
-    else if last_mindmg_value ~= nil then restore_mindmg(); last_mindmg_value = nil; last_target = nil end end
-end)
-
-client.set_event_callback("weapon_fire", function(e)
-    if not ui.enable:get() or not ui.defensive.peek_fix:get() then return end
-    local lp = entity.get_local_player()
-    if client.userid_to_entindex(e.userid) == lp then
-        local ox, oy, oz = entity.get_prop(lp, "m_vecOrigin")
-        if ox then entity.set_prop(lp, "m_vecOrigin", ox, oy, oz) end
-    end
+            if threat ~= last_target or req ~= last_mindmg_value then if ref_mindmg then ref_mindmg:override(req); last_mindmg_value = req; last_target = threat end end
+        else if last_mindmg_value ~= nil then restore_mindmg() end end
+    else if last_mindmg_value ~= nil then restore_mindmg() end end
 end)
 
 client.set_event_callback("player_hurt", function(e)
     local vic = client.userid_to_entindex(e.userid)
-    if vic and resolver_data[vic] then resolver_data[vic].last_damage_time = globals.curtime() end
+    local attacker = client.userid_to_entindex(e.attacker)
+    if attacker == entity.get_local_player() and is_valid_enemy_target(vic) and resolver_data[vic] then resolver_data[vic].last_damage_time = globals.curtime() end
 end)
 
 function ui.send_killsay()
     local state = ui.killsay_state
     if globals.realtime() - state.last_time < 0.75 or #state.phrases == 0 then return end
     local index = math.random(1, #state.phrases)
-    if #state.phrases > 1 and index == state.last_index then
-        index = index % #state.phrases + 1
-    end
+    if #state.phrases > 1 and index == state.last_index then index = index % #state.phrases + 1 end
     local phrase = state.phrases[index]:gsub("[;\r\n\"]", "")
     if phrase == "" then return end
     client.exec("say " .. phrase)
@@ -2990,24 +3736,34 @@ end
 client.set_event_callback("player_death", function(e)
     local vic = client.userid_to_entindex(e.userid)
     local attacker = client.userid_to_entindex(e.attacker)
-    local local_player = entity.get_local_player()
-    local should_killsay = ui.enable:get()
-        and ui.visuals.killsay:get()
-        and attacker == local_player
-        and vic ~= local_player
-        and vic ~= nil
-        and entity.is_enemy(vic)
-    if vic and resolver_data[vic] then
-        pcall(function() plist.set(vic, "Force body yaw", false); plist.set(vic, "Force body yaw value", 0); plist.set(vic, "Correction active", true); plist.set(vic, "Override prefer body aim", "-"); plist.set(vic, "Override safe point", "-"); plist.set(vic, "Minimum damage override", 0) end)
+    local should_killsay = ui.enable:get() and ui.visuals.killsay:get() and attacker == entity.get_local_player() and is_valid_enemy_target(vic)
+    if is_valid_enemy_target(vic) and resolver_data[vic] then
+        safe_plist_set(vic, "Force body yaw", false)
+        safe_plist_set(vic, "Force body yaw value", 0)
+        safe_plist_set(vic, "Correction active", true)
+        safe_plist_set(vic, "Override prefer body aim", "-")
+        safe_plist_set(vic, "Override safe point", "-")
+        safe_plist_set(vic, "Minimum damage override", 0)
+        ui.clear_player_runtime(vic)
     end
     if should_killsay then ui.send_killsay() end
 end)
 
 client.set_event_callback("player_disconnect", function(e)
     local p = client.userid_to_entindex(e.userid)
-    if not p then return end
-    resolver_data[p] = nil; lag_records[p] = nil; defensive_records[p] = nil; speed_cache[p] = nil; damage_cache[p] = nil; eye_angle_data[p] = nil; resolver_cache[p] = nil; defensive_check_cache[p] = nil
-    pcall(function() plist.set(p, "Force body yaw", false); plist.set(p, "Force body yaw value", 0); plist.set(p, "Override prefer body aim", "-"); plist.set(p, "Override safe point", "-") end)
+    if not p or p <= 0 then return end
+    local managed_enemy = p ~= entity.get_local_player() and resolver_data[p] ~= nil
+    if managed_enemy then
+        pcall(function()
+            plist.set(p, "Force body yaw", false)
+            plist.set(p, "Force body yaw value", 0)
+            plist.set(p, "Correction active", true)
+            plist.set(p, "Override prefer body aim", "-")
+            plist.set(p, "Override safe point", "-")
+            plist.set(p, "Minimum damage override", 0)
+        end)
+    end
+    ui.clear_player_runtime(p)
 end)
 
 -- this is for the console logging dont mind it
@@ -3016,11 +3772,17 @@ client.set_event_callback("aim_hit", on_aim_hit)
 client.set_event_callback("round_start", on_round_start)
 
 -- callback assignment connections
-ui.enable:set_callback(handle_menu_visibility)
+ui.enable:set_callback(function()
+    handle_menu_visibility()
+    if not ui.enable:get() then
+        release_guardian_overrides()
+    end
+end)
 ui.tabs:set_callback(handle_menu_visibility)
 ui.home.mode:set_callback(handle_menu_visibility)
 ui.home.indicator:set_callback(handle_menu_visibility)
 ui.defensive.enable:set_callback(handle_menu_visibility)
+ui.defensive.strategy:set_callback(handle_menu_visibility)
 ui.defensive.peek_fix:set_callback(handle_menu_visibility)
 ui.rage.smart_baim:set_callback(handle_menu_visibility)
 ui.rage.lethal_enable:set_callback(handle_menu_visibility)
@@ -3029,7 +3791,7 @@ ui.visuals.show_lethal_flag:set_callback(handle_menu_visibility)
 
 ui.config.preset:set_callback(function()
     local sel = ui.config.preset:get()
-    ui.config.description:set(sel == "Custom" and "Custom configuration matrix profile." or (config_presets[sel] and config_presets[sel].description or "No baseline overview description defined."))
+    ui.config.description:set(config_presets[sel] and config_presets[sel].description or "No description defined.")
 end)
 ui.config.load:set_callback(function() config_system.load_preset() end)
 ui.config.export:set_callback(function() config_system.export_config() end)
@@ -3037,15 +3799,25 @@ ui.config.import:set_callback(function() config_system.import_config() end)
 
 function config_system.load_preset()
     local sel = ui.config.preset:get()
-    if sel == "Custom" then return end
-    local pr = config_presets[sel]
-    if pr then config_system.apply_config(pr); client.delay_call(0.1, function() ui.config.preset:set("Custom") end) end
+    
+    local preset_data = config_presets[sel]
+    if not preset_data or not preset_data.code then return end
+    
+    local s, js = pcall(base64.decode, preset_data.code)
+    if not s then return end
+    
+    local s2, cfg = pcall(json.parse, js)
+    
+    if s2 and cfg then 
+        config_system.apply_config(cfg)
+        client.log("Guardian Reborn: " .. sel .. " preset loaded.")
+    end
 end
 
 function config_system.export_config()
     local cfg = config_system.get_current_config()
     clipboard_util.set(base64.encode(json.stringify(cfg)))
-    client.log("Guardian Reborn: Configuration exported.")
+    client.log("Guardian Reborn: Config exported.")
 end
 
 function config_system.import_config()
@@ -3054,46 +3826,18 @@ function config_system.import_config()
     local s, js = pcall(base64.decode, enc)
     if not s then return end
     local s2, cfg = pcall(json.parse, js)
-    if s2 then config_system.apply_config(cfg); client.log("Guardian Reborn: Imported.") end
+    if s2 then config_system.apply_config(cfg); client.log("Guardian Reborn: Config Imported.") end
 end
 
 client.set_event_callback("shutdown", function()
-    if last_mindmg_value ~= nil then restore_mindmg() end
-    fakelag_ref:override()
+    guardian_overrides_released = false
+    release_guardian_overrides()
     client.set_clan_tag("")
-    local p = entity.get_players(true)
-    if p then for i=1,#p do pcall(function() plist.set(p[i], "Force body yaw", false); plist.set(p[i], "Force body yaw value", 0); plist.set(p[i], "Override prefer body aim", "-"); plist.set(p[i], "Override safe point", "-") end) end end
-    client.log("Guardian Reborn successfully shut down and state parameters cleared.")
+    client.log("Unloaded Guardian.")
 end)
 
 -- ============================================================================
 -- INITIALIZATION PIPELINE DEPLOYMENT
 -- ============================================================================
 handle_menu_visibility()
-client.log("Guardian Reborn | V1.0")
-
-return {
-    stop = function()
-        ui.enable:set(false)
-        pui.traverse(ui, function(item)
-            pcall(function() item:set_visible(false) end)
-        end)
-
-        if last_mindmg_value ~= nil then restore_mindmg() end
-        fakelag_ref:override()
-        client.set_clan_tag("")
-
-        local players = entity.get_players(true)
-        if players then
-            for i = 1, #players do
-                pcall(function()
-                    plist.set(players[i], "Force body yaw", false)
-                    plist.set(players[i], "Force body yaw value", 0)
-                    plist.set(players[i], "Correction active", true)
-                    plist.set(players[i], "Override prefer body aim", "-")
-                    plist.set(players[i], "Override safe point", "-")
-                end)
-            end
-        end
-    end
-}
+client.log("Guardian Reborn | V1.2 | Better resolver logic, Added per player state learning, Removed some unnecessary sliders, Defensive in peek improvement, Clantag, lethal behaviour changed, Trashtalk added")
